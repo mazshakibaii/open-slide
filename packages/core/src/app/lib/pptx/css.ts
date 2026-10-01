@@ -302,7 +302,7 @@ export function parseLinearGradient(
   const args = splitTopLevel(m[1]);
   if (args.length < 2) return null;
   let angle = 180;
-  let first = args[0];
+  const first = args[0];
   const explicitAngle = parseAngleDeg(first);
   if (explicitAngle !== null) {
     angle = explicitAngle;
@@ -313,8 +313,16 @@ export function parseLinearGradient(
     angle = a;
     args.shift();
   }
-  first = args[0];
-  const length = gradientLineLength(angle, w, h) || 1;
+  const stops = parseColorStops(args, gradientLineLength(angle, w, h) || 1, colorParser);
+  if (!stops) return null;
+  return { angleDeg: ((angle % 360) + 360) % 360, stops };
+}
+
+function parseColorStops(
+  args: string[],
+  length: number,
+  colorParser: ColorParser,
+): GradientStop[] | null {
   const raw: { color: Rgba; pos: number | null }[] = [];
   for (const arg of args) {
     const tokens = splitTopLevel(arg, ' ');
@@ -354,7 +362,44 @@ export function parseLinearGradient(
     running = pos;
   }
   const stops = raw.map((s) => ({ color: s.color, pos: clamp01(s.pos as number) }));
-  return { angleDeg: ((angle % 360) + 360) % 360, stops: unpremultiplyStops(stops) };
+  return unpremultiplyStops(stops);
+}
+
+export type RadialGradient = { x: number; y: number; stops: GradientStop[] };
+
+/**
+ * The radial gradients PowerPoint's path fill draws the same way: one ellipse
+ * (or a circle in a square box) sized to the farthest corner, centred anywhere.
+ */
+export function parseRadialGradient(
+  layer: string,
+  w: number,
+  h: number,
+  colorParser: ColorParser = parseColor,
+): RadialGradient | null {
+  const m = /^radial-gradient\((.*)\)$/s.exec(layer.trim());
+  if (!m) return null;
+  const args = splitTopLevel(m[1]);
+  let x = 0.5;
+  let y = 0.5;
+  const first = args[0] ?? '';
+  if (/^(circle|ellipse|closest-|farthest-|at\s)|\sat\s/.test(first) || /^-?[\d.]/.test(first)) {
+    args.shift();
+    const [shape, position] = first.split(/(?:^|\s)at\s/);
+    const words = shape.trim().split(/\s+/).filter(Boolean);
+    if (words.some((word) => !['circle', 'ellipse', 'farthest-corner'].includes(word))) return null;
+    if (words.includes('circle') && Math.abs(w - h) > 0.05 * Math.max(w, h)) return null;
+    if (position) {
+      const pos = parsePosition(position.trim());
+      if (!pos) return null;
+      x = pos.x.frac + pos.x.px / Math.max(1, w);
+      y = pos.y.frac + pos.y.px / Math.max(1, h);
+    }
+  }
+  if (args.length < 2) return null;
+  const ray = Math.SQRT2 * Math.max(x, 1 - x) * w || 1;
+  const stops = parseColorStops(args, ray, colorParser);
+  return stops ? { x, y, stops } : null;
 }
 
 /**

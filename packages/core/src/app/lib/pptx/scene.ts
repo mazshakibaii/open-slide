@@ -18,6 +18,8 @@ export type Crop = { l: number; t: number; r: number; b: number };
 export type Fill =
   | { kind: 'solid'; color: Rgba }
   | { kind: 'gradient'; angleDeg: number; stops: GradientStop[] }
+  /** Path gradient centred at (x, y), fractions of the box, reaching its farthest corner. */
+  | { kind: 'radial'; x: number; y: number; stops: GradientStop[] }
   | { kind: 'image'; imageId: number; crop: Crop | null; alpha: number };
 
 export type Outline = { width: number; color: Rgba; dash: 'solid' | 'dash' | 'dot' };

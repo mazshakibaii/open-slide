@@ -275,3 +275,12 @@ test('rounds the corners a rounded overflow-hidden parent clips off its children
   expect(footer).toContain('<a:custGeom>');
   expect(footer.match(/<a:arcTo /g)).toHaveLength(2);
 });
+
+test('draws a radial gradient as a native path gradient', () => {
+  const xml = slide(9);
+  const glow = shapeNamed(xml, 'Rectangle #glow');
+  expect(glow).toContain(
+    '<a:path path="circle"><a:fillToRect l="30000" t="20000" r="70000" b="80000"/></a:path>',
+  );
+  expect(pictureAt(xml, 820, 230)).toBeUndefined();
+});

@@ -15,6 +15,7 @@ import {
   parseFontFamilies,
   parseLinearGradient,
   parsePosition,
+  parseRadialGradient,
   parseShadows,
   parseTransform,
   splitTopLevel,
@@ -342,5 +343,47 @@ describe('parseClipPath', () => {
     expect(parseClipPath('ellipse(50% 50% at 50% 50%)', 200, 100)).toEqual({ kind: 'ellipse' });
     expect(parseClipPath('circle(30% at 10% 10%)', 100, 100)).toBeNull();
     expect(parseClipPath('polygon(0 0, 100% 0, 0 100%)', 100, 100)).toBeNull();
+  });
+});
+
+describe('parseRadialGradient', () => {
+  it('reads the default centred ellipse and a positioned one', () => {
+    expect(
+      parseRadialGradient('radial-gradient(rgb(255, 0, 0), rgb(0, 0, 255))', 200, 100),
+    ).toEqual({
+      x: 0.5,
+      y: 0.5,
+      stops: [
+        { pos: 0, color: { r: 255, g: 0, b: 0, a: 1 } },
+        { pos: 1, color: { r: 0, g: 0, b: 255, a: 1 } },
+      ],
+    });
+    const glow = parseRadialGradient(
+      'radial-gradient(at 30% 20%, rgba(255, 255, 255, 0.5) 0%, rgba(0, 0, 0, 0) 60%)',
+      200,
+      100,
+    );
+    expect(glow).toMatchObject({ x: 0.3, y: 0.2 });
+    expect(glow?.stops.at(-1)).toEqual({ pos: 0.6, color: { r: 255, g: 255, b: 255, a: 0 } });
+  });
+  it('accepts a circle only where it matches the box', () => {
+    expect(
+      parseRadialGradient('radial-gradient(circle, rgb(0, 0, 0), rgb(1, 1, 1))', 100, 100),
+    ).not.toBeNull();
+    expect(
+      parseRadialGradient('radial-gradient(circle, rgb(0, 0, 0), rgb(1, 1, 1))', 300, 100),
+    ).toBeNull();
+  });
+  it('leaves sizes PowerPoint cannot match to the raster', () => {
+    expect(
+      parseRadialGradient('radial-gradient(closest-side, rgb(0, 0, 0), rgb(1, 1, 1))', 100, 100),
+    ).toBeNull();
+    expect(
+      parseRadialGradient(
+        'radial-gradient(40px 20px at 50% 50%, rgb(0, 0, 0), rgb(1, 1, 1))',
+        100,
+        100,
+      ),
+    ).toBeNull();
   });
 });

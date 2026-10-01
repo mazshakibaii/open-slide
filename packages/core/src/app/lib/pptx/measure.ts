@@ -23,6 +23,7 @@ import {
   parseLinearGradient,
   parsePosition,
   parsePx,
+  parseRadialGradient,
   parseShadows,
   parseTransform,
   type Radii,
@@ -478,7 +479,10 @@ function paintsBackgroundSeparately(
   if (layers.length !== 1) return true;
   const layer = layers[0];
   if (layer.startsWith('url(')) return false;
-  return parseLinearGradient(layer, w, h, color) === null;
+  return (
+    parseLinearGradient(layer, w, h, color) === null &&
+    parseRadialGradient(layer, w, h, color) === null
+  );
 }
 
 function pushSlot(ctx: Ctx, node: SceneNode | null): Slot {
@@ -949,6 +953,10 @@ function paintBoxRect(ctx: Ctx, m: Measured, rect: Rect): void {
     layers[0] && !layers[0].startsWith('url(')
       ? parseLinearGradient(layers[0], rect.w, rect.h, ctx.color)
       : null;
+  const radial =
+    layers[0] && !gradient && !layers[0].startsWith('url(')
+      ? parseRadialGradient(layers[0], rect.w, rect.h, ctx.color)
+      : null;
   const imageLayer = layers[0]?.startsWith('url(') ? layers[0] : null;
   const radii = radiiOf(cs, rect.w, rect.h);
 
@@ -965,6 +973,14 @@ function paintBoxRect(ctx: Ctx, m: Measured, rect: Rect): void {
       kind: 'gradient',
       angleDeg: gradient.angleDeg,
       stops: gradient.stops.map((s) => ({ pos: s.pos, color: withAlpha(s.color, opacity) })),
+    });
+  }
+  if (radial) {
+    fills.push({
+      kind: 'radial',
+      x: radial.x,
+      y: radial.y,
+      stops: radial.stops.map((s) => ({ pos: s.pos, color: withAlpha(s.color, opacity) })),
     });
   }
 

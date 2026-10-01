@@ -427,3 +427,43 @@ describe('speaker notes', () => {
     expect(xml).toContain('<a:t>line one</a:t></a:r><a:br>');
   });
 });
+
+describe('radial fills', () => {
+  it('writes a circle path gradient focused on the centre', () => {
+    const files = buildPptxFiles({
+      images: [],
+      slides: [
+        {
+          background: null,
+          notes: null,
+          nodes: [
+            {
+              kind: 'shape',
+              name: 'Glow',
+              box: { x: 0, y: 0, w: 200, h: 100 },
+              rotationDeg: 0,
+              flipV: false,
+              geometry: { kind: 'rect' },
+              fill: {
+                kind: 'radial',
+                x: 0.3,
+                y: 0.2,
+                stops: [
+                  { pos: 0, color: { r: 255, g: 255, b: 255, a: 1 } },
+                  { pos: 0.6, color: { r: 255, g: 255, b: 255, a: 0 } },
+                ],
+              },
+              outline: null,
+              shadow: null,
+            },
+          ],
+        },
+      ],
+    });
+    const xml = strFromU8(files['ppt/slides/slide1.xml']);
+    expect(xml).toContain(
+      '<a:path path="circle"><a:fillToRect l="30000" t="20000" r="70000" b="80000"/></a:path>',
+    );
+    expect(xml).toContain('<a:gs pos="60000">');
+  });
+});

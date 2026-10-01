@@ -530,6 +530,13 @@ function fillXml(fill: Fill, ctx: EmitContext): string {
       const ang = degrees(fill.angleDeg - 90);
       return `<a:gradFill rotWithShape="1"><a:gsLst>${stops}</a:gsLst><a:lin ang="${ang}" scaled="0"/></a:gradFill>`;
     }
+    case 'radial': {
+      const stops = fill.stops
+        .map((s) => `<a:gs pos="${percent(s.pos)}">${colorXml(s.color)}</a:gs>`)
+        .join('');
+      const rect = `<a:fillToRect l="${percent(fill.x)}" t="${percent(fill.y)}" r="${percent(1 - fill.x)}" b="${percent(1 - fill.y)}"/>`;
+      return `<a:gradFill rotWithShape="1"><a:gsLst>${stops}</a:gsLst><a:path path="circle">${rect}</a:path></a:gradFill>`;
+    }
     case 'image': {
       const image = ctx.imageById.get(fill.imageId);
       if (!image) return '<a:noFill/>';

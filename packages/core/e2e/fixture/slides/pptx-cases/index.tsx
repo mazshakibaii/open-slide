@@ -283,6 +283,15 @@ const Boxes: Page = () => (
       />
       <div id="card-footer" style={{ height: 120, background: '#0ea5e9' }} />
     </div>
+    <div
+      id="glow"
+      style={{
+        ...at(520, 80),
+        width: 600,
+        height: 300,
+        backgroundImage: 'radial-gradient(at 30% 20%, rgba(14, 165, 233, 0.8), transparent 60%)',
+      }}
+    />
   </div>
 );
 
