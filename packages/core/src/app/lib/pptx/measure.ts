@@ -11,12 +11,14 @@ import {
   IDENTITY,
   isIdentity,
   isVisibleColor,
+  type LinearGradient,
   type Mat,
   multiply,
   normalizeRadii,
   type Position,
   parseAngleDeg,
   parseBlurPx,
+  parseClipPath,
   parseCornerRadius,
   parseLinearGradient,
   parsePosition,
@@ -89,6 +91,9 @@ type Inherited = {
   layer: Layer;
   link: string | null;
   highlight: Rgba | null;
+  dropShadow: Shadow | null;
+  /** `background-clip: text` gradient the text is painted with. */
+  textFill: LinearGradient | null;
 };
 
 type Measured = {
@@ -98,6 +103,10 @@ type Measured = {
   world: Mat;
   opacity: number;
   clip: Rect | null;
+  /** A `drop-shadow()` filter on this element or an ancestor without a box of its own. */
+  dropShadow: Shadow | null;
+  /** `clip-path: circle()/ellipse()` centred on the box. */
+  ellipse: boolean;
 };
 
 type Ctx = {
@@ -165,6 +174,8 @@ async function measureMaterialized(options: MeasurePageOptions): Promise<SlideSc
       layer,
       link: null,
       highlight: null,
+      dropShadow: null,
+      textFill: null,
     });
     flushLayer(ctx, layer);
   } finally {
@@ -307,8 +318,9 @@ function measureElement(
     const oy = rect.y + parsePx(origin[1]);
     world = multiply(world, multiply(translation(ox, oy), multiply(local, translation(-ox, -oy))));
   }
-  const opacity =
-    parent.opacity * Number.parseFloat(cs.opacity) * analyzeFilter(cs.filter, ctx.color).opacity;
+  const filter = analyzeFilter(cs.filter, ctx.color);
+  const opacity = parent.opacity * Number.parseFloat(cs.opacity) * filter.opacity;
+  const clipPath = cs.clipPath === 'none' ? null : parseClipPath(cs.clipPath, rect.w, rect.h);
   let clip = parent.clip;
   const overflow = cs.overflow;
   const clips =
@@ -322,7 +334,25 @@ function measureElement(
   } else if (clips) {
     clip = null;
   }
-  return { el, cs, rect, world, opacity, clip };
+  if (clipPath?.kind === 'inset' && isIdentity(world)) {
+    const inset = {
+      x: rect.x + clipPath.l,
+      y: rect.y + clipPath.t,
+      w: Math.max(0, rect.w - clipPath.l - clipPath.r),
+      h: Math.max(0, rect.h - clipPath.t - clipPath.b),
+    };
+    clip = clip ? intersect(clip, inset) : inset;
+  }
+  return {
+    el,
+    cs,
+    rect,
+    world,
+    opacity,
+    clip,
+    dropShadow: filter.dropShadow ?? parent.dropShadow,
+    ellipse: clipPath?.kind === 'ellipse',
+  };
 }
 
 function paddingBox(rect: Rect, cs: CSSStyleDeclaration): Rect {
@@ -350,22 +380,37 @@ function needsSubtreeRaster(ctx: Ctx, m: Measured): boolean {
   const { cs, el } = m;
   if (MEDIA_TAGS.has(el.tagName.toUpperCase()) && el.tagName.toUpperCase() !== 'IMG') return true;
   if (analyzeFilter(cs.filter, ctx.color).raster) return true;
-  const backdrop =
-    cs.backdropFilter || (cs as unknown as Record<string, string>).webkitBackdropFilter;
-  if (backdrop && backdrop !== 'none') return true;
   if (cs.mixBlendMode !== 'normal') return true;
-  if (cs.clipPath !== 'none' && !/^inset\(0(px)?\)$/.test(cs.clipPath)) return true;
+  if (cs.clipPath !== 'none' && !parseClipPath(cs.clipPath, m.rect.w, m.rect.h)) return true;
+  if (cs.clipPath !== 'none' && !isIdentity(m.world)) return true;
   const mask = cs.maskImage || (cs as unknown as Record<string, string>).webkitMaskImage;
   if (mask && mask !== 'none') return true;
-  const bgClip =
-    cs.backgroundClip || (cs as unknown as Record<string, string>).webkitBackgroundClip;
-  if (bgClip === 'text' && cs.backgroundImage !== 'none') return true;
+  if (clipsBackgroundToText(cs) && !textGradientOf(ctx, m)) return true;
   if (cs.writingMode && cs.writingMode !== 'horizontal-tb') return true;
   const d = decompose(m.world);
   if (!d || d.skewed) return true;
   if (Math.abs(d.scaleX - d.scaleY) > 0.01 * Math.max(d.scaleX, d.scaleY) && el.textContent?.trim())
     return true;
   return false;
+}
+
+function clipsBackgroundToText(cs: CSSStyleDeclaration): boolean {
+  const bgClip =
+    cs.backgroundClip || (cs as unknown as Record<string, string>).webkitBackgroundClip;
+  return bgClip === 'text' && cs.backgroundImage !== 'none';
+}
+
+/** A single linear gradient clipped to the text: PowerPoint fills runs with gradients. */
+function textGradientOf(ctx: Ctx, m: Measured): LinearGradient | null {
+  if (!clipsBackgroundToText(m.cs)) return null;
+  const layers = splitTopLevel(m.cs.backgroundImage);
+  if (layers.length !== 1) return null;
+  const gradient = parseLinearGradient(layers[0], m.rect.w, m.rect.h, ctx.color);
+  if (!gradient) return null;
+  return {
+    angleDeg: gradient.angleDeg,
+    stops: gradient.stops.map((s) => ({ pos: s.pos, color: withAlpha(s.color, m.opacity) })),
+  };
 }
 
 function paintsBackgroundSeparately(
@@ -464,7 +509,16 @@ function paintBlock(ctx: Ctx, el: Element, inherited: Inherited): void {
   const projected = ctx.projected.get(el);
   if (projected) {
     const rect = rel(ctx, projected);
-    const m = { el, cs, rect, world: IDENTITY, opacity: inherited.opacity, clip: inherited.clip };
+    const m: Measured = {
+      el,
+      cs,
+      rect,
+      world: IDENTITY,
+      opacity: inherited.opacity,
+      clip: inherited.clip,
+      dropShadow: null,
+      ellipse: false,
+    };
     requestRaster(ctx, m, 'subtree', false);
     return;
   }
@@ -496,6 +550,8 @@ function paintBlock(ctx: Ctx, el: Element, inherited: Inherited): void {
     link: linkOf(el) ?? inherited.link,
     highlight: null,
     layer: stacking ? { index: ctx.slots.length, items: [] } : inherited.layer,
+    dropShadow: paintsAnything(cs, ctx.color) ? null : m.dropShadow,
+    textFill: textGradientOf(ctx, m) ?? inherited.textFill,
   };
 
   const flow = newFlow();
@@ -678,7 +734,8 @@ function collectInline(
     const m = measureElement(ctx, child, cs, inherited);
     if (!m) continue;
     const highlight = highlightOf(ctx, cs);
-    if (!highlight && paintsAnything(cs, ctx.color)) inlineItems.push(m);
+    const textFill = textGradientOf(ctx, m);
+    if (!highlight && !textFill && paintsAnything(cs, ctx.color)) inlineItems.push(m);
     collectInline(
       ctx,
       child,
@@ -688,6 +745,7 @@ function collectInline(
         decoration: mergeDecoration(inherited.decoration, cs),
         link: linkOf(child) ?? inherited.link,
         highlight: highlight ?? inherited.highlight,
+        textFill: textFill ?? inherited.textFill,
       },
       flow,
       blockChildren,
@@ -827,9 +885,10 @@ function paintBoxRect(ctx: Ctx, m: Measured, rect: Rect): void {
   const bg = ctx.color(cs.backgroundColor);
   const sides = borderSides(cs, ctx.color);
   const shadows = parseShadows(cs.boxShadow, ctx.color);
-  const outer = dominantShadow(shadows, false);
+  const ownOuter = dominantShadow(shadows, false);
   const inner = dominantShadow(shadows, true);
-  const layers = cs.backgroundImage === 'none' ? [] : splitTopLevel(cs.backgroundImage);
+  const textClip = clipsBackgroundToText(cs);
+  const layers = cs.backgroundImage === 'none' || textClip ? [] : splitTopLevel(cs.backgroundImage);
   const gradient =
     layers[0] && !layers[0].startsWith('url(')
       ? parseLinearGradient(layers[0], rect.w, rect.h, ctx.color)
@@ -844,7 +903,7 @@ function paintBoxRect(ctx: Ctx, m: Measured, rect: Rect): void {
   const anyBorder = sides.some((s) => s.visible);
 
   const fills: Fill[] = [];
-  if (isVisibleColor(bg)) fills.push({ kind: 'solid', color: withAlpha(bg, opacity) });
+  if (isVisibleColor(bg) && !textClip) fills.push({ kind: 'solid', color: withAlpha(bg, opacity) });
   if (gradient) {
     fills.push({
       kind: 'gradient',
@@ -853,6 +912,9 @@ function paintBoxRect(ctx: Ctx, m: Measured, rect: Rect): void {
     });
   }
 
+  // A drop-shadow filter follows painted pixels: a box with nothing to paint casts none.
+  const outer =
+    ownOuter ?? (fills.length > 0 || anyBorder ? (m.dropShadow ?? undefined) : undefined);
   const hasShape = fills.length > 0 || anyBorder || outer;
   if (!hasShape && !imageLayer) return;
 
@@ -875,7 +937,9 @@ function paintBoxRect(ctx: Ctx, m: Measured, rect: Rect): void {
     };
     shapeRadii = shrinkRadii(radii, w / 2);
   }
-  const geometry = geometryFor(shapeRadii, shapeRect.w, shapeRect.h);
+  const geometry: Geometry = m.ellipse
+    ? { kind: 'ellipse' }
+    : geometryFor(shapeRadii, shapeRect.w, shapeRect.h);
   const canClip = geometry.kind === 'rect' && !outline;
   const finalRect = canClip ? clipRect(shapeRect, m.clip, world) : shapeRect;
   if (finalRect.w < MIN_SIZE && finalRect.h < MIN_SIZE) return;
@@ -1103,7 +1167,10 @@ function paintImage(ctx: Ctx, m: Measured & { el: HTMLImageElement }): void {
   if (!placement || placement.rect.w < MIN_SIZE || placement.rect.h < MIN_SIZE) return;
   const radii = radiiOf(cs, m.rect.w, m.rect.h);
   const inset = bgOrBorder ? Math.max(...borderSides(cs, ctx.color).map((side) => side.width)) : 0;
-  const geometry = geometryFor(shrinkRadii(radii, inset), placement.rect.w, placement.rect.h);
+  const geometry: Geometry = m.ellipse
+    ? { kind: 'ellipse' }
+    : geometryFor(shrinkRadii(radii, inset), placement.rect.w, placement.rect.h);
+  const shadow = m.dropShadow ? toShadowEffect(m.dropShadow, m.opacity) : null;
   const slot = pushSlot(ctx, null);
   const alpha = m.opacity;
   const src = el.currentSrc || el.src;
@@ -1112,7 +1179,7 @@ function paintImage(ctx: Ctx, m: Measured & { el: HTMLImageElement }): void {
     ctx.images.fromUrl(src).then((loaded: LoadedImage | null) => {
       if (!loaded) return;
       slot.node = {
-        ...makePicture(name, placement, m.world, loaded.id, alpha, geometry, null, null),
+        ...makePicture(name, placement, m.world, loaded.id, alpha, geometry, null, shadow),
         description: el.alt || null,
       };
       noteDisplay(ctx, slot.node);
@@ -1294,7 +1361,7 @@ function clipText(
 
 function runStyle(ctx: Ctx, cs: CSSStyleDeclaration, inherited: Inherited): RunStyle {
   const color = ctx.color(cs.color) ?? { r: 0, g: 0, b: 0, a: 1 };
-  const textShadow = parseShadows(cs.textShadow, ctx.color)[0];
+  const textShadow = parseShadows(cs.textShadow, ctx.color)[0] ?? inherited.dropShadow;
   const strokeWidth = parsePx((cs as unknown as Record<string, string>).webkitTextStrokeWidth);
   const strokeColor =
     strokeWidth > 0
@@ -1328,6 +1395,7 @@ function runStyle(ctx: Ctx, cs: CSSStyleDeclaration, inherited: Inherited): RunS
     kerning: cs.fontKerning !== 'none',
     link: inherited.link,
     highlight: inherited.highlight,
+    gradient: inherited.textFill,
   };
 }
 

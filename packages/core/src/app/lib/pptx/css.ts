@@ -561,7 +561,7 @@ export function parsePosition(value: string): Position | null {
   return pos as Position;
 }
 
-export type FilterInfo = { opacity: number; raster: boolean };
+export type FilterInfo = { opacity: number; raster: boolean; dropShadow: Shadow | null };
 
 function filterAmount(arg: string): number {
   const t = arg.trim();
@@ -583,7 +583,7 @@ const IDENTITY_AT: Record<string, number> = {
  * are not `none`; only functions that change pixels should force a raster.
  */
 export function analyzeFilter(filter: string, colorParser: ColorParser = parseColor): FilterInfo {
-  const info: FilterInfo = { opacity: 1, raster: false };
+  const info: FilterInfo = { opacity: 1, raster: false, dropShadow: null };
   if (!filter || filter === 'none') return info;
   const fns = Array.from(filter.matchAll(/([a-z-]+)\(((?:[^()]|\([^()]*\))*)\)/g));
   const consumed = filter.replace(/([a-z-]+)\(((?:[^()]|\([^()]*\))*)\)/g, '').trim();
@@ -592,11 +592,38 @@ export function analyzeFilter(filter: string, colorParser: ColorParser = parseCo
     if (name === 'opacity') info.opacity *= Math.min(1, Math.max(0, filterAmount(arg)));
     else if (name === 'blur') info.raster ||= Number.parseFloat(arg) > 0;
     else if (name === 'hue-rotate') info.raster ||= (parseAngleDeg(arg.trim()) ?? 1) % 360 !== 0;
-    else if (name === 'drop-shadow') info.raster ||= parseShadows(arg, colorParser).length > 0;
-    else if (name in IDENTITY_AT) info.raster ||= filterAmount(arg) !== IDENTITY_AT[name];
+    else if (name === 'drop-shadow') {
+      const [shadow] = parseShadows(arg, colorParser);
+      if (!shadow) continue;
+      // PowerPoint draws one shadow per shape; stacked ones need pixels.
+      if (info.dropShadow) info.raster = true;
+      info.dropShadow = shadow;
+    } else if (name in IDENTITY_AT) info.raster ||= filterAmount(arg) !== IDENTITY_AT[name];
     else info.raster = true;
   }
   return info;
+}
+
+export type ClipShape =
+  | { kind: 'inset'; t: number; r: number; b: number; l: number }
+  | { kind: 'ellipse' };
+
+/** The `clip-path` shapes that map onto a clip rectangle or an ellipse geometry. */
+export function parseClipPath(value: string, w: number, h: number): ClipShape | null {
+  const inset = /^inset\((.*)\)$/.exec(value.trim());
+  if (inset) {
+    const lengths = inset[1]
+      .split(/\s+round\s+/)[0]
+      .trim()
+      .split(/\s+/);
+    const px = (token: string, base: number) =>
+      token.endsWith('%') ? (Number.parseFloat(token) / 100) * base : parsePx(token);
+    if (lengths.length === 0 || lengths.length > 4) return null;
+    const [t, r = t, b = t, l = r] = lengths;
+    return { kind: 'inset', t: px(t, h), r: px(r, w), b: px(b, h), l: px(l, w) };
+  }
+  const centred = /^(circle\(50%|ellipse\(50% 50%) at 50% 50%\)$/.test(value.trim());
+  return centred ? { kind: 'ellipse' } : null;
 }
 
 export function parseBlurPx(filter: string): number {

@@ -209,4 +209,68 @@ const Generated: Page = () => (
   </div>
 );
 
-export default [First, Unpositioned, Effects, Stacking, Runs, Text, Generated] satisfies Page[];
+const Decor: Page = () => (
+  <div style={{ ...page, position: 'relative', background: '#1e3a8a', color: '#fff' }}>
+    <div
+      id="glass"
+      style={{
+        ...at(80, 80),
+        width: 400,
+        height: 160,
+        padding: 24,
+        borderRadius: 16,
+        background: 'rgba(255, 255, 255, 0.25)',
+        backdropFilter: 'blur(12px)',
+      }}
+    >
+      Glass card text
+    </div>
+    <div
+      id="lifted"
+      style={{
+        ...at(560, 80),
+        width: 400,
+        height: 160,
+        padding: 24,
+        background: '#334155',
+        filter: 'drop-shadow(0 8px 12px rgba(0, 0, 0, 0.6))',
+      }}
+    >
+      Drop shadow card
+    </div>
+    <h2 style={{ ...at(1040, 80), filter: 'drop-shadow(0 0 20px rgb(255, 0, 0))' }}>
+      Glowing title
+    </h2>
+    <h1
+      style={{
+        ...at(80, 360),
+        fontSize: 64,
+        backgroundImage: 'linear-gradient(90deg, #2563eb, #db2777)',
+        WebkitBackgroundClip: 'text',
+        backgroundClip: 'text',
+        color: 'transparent',
+      }}
+    >
+      Gradient headline
+    </h1>
+    <p style={{ ...at(80, 520), whiteSpace: 'nowrap', clipPath: 'inset(0 50% 0 0)' }}>
+      Left half stays visible while the right half is clipped away
+    </p>
+    <img
+      src={photo}
+      alt="Avatar"
+      style={{ ...at(1040, 360), width: 120, height: 120, clipPath: 'circle(50% at 50% 50%)' }}
+    />
+  </div>
+);
+
+export default [
+  First,
+  Unpositioned,
+  Effects,
+  Stacking,
+  Runs,
+  Text,
+  Generated,
+  Decor,
+] satisfies Page[];

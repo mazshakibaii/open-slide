@@ -28,6 +28,7 @@ const style: RunStyle = {
   kerning: false,
   link: null,
   highlight: null,
+  gradient: null,
 };
 
 const deck: DeckScene = {
@@ -329,6 +330,63 @@ describe('runs and pictures', () => {
   it('writes direction, outline level and space before on the paragraph', () => {
     expect(slide).toContain('<a:pPr lvl="1" algn="r" rtl="1">');
     expect(slide).toContain('<a:spcBef><a:spcPts val="1200"/></a:spcBef>');
+  });
+
+  it('fills a run with a gradient instead of a colour', () => {
+    const files = buildPptxFiles({
+      images: [],
+      slides: [
+        {
+          background: null,
+          notes: null,
+          nodes: [
+            {
+              kind: 'text',
+              name: 'Text: Gradient',
+              box: { x: 0, y: 0, w: 400, h: 60 },
+              rotationDeg: 0,
+              flipV: false,
+              wrap: false,
+              paragraphs: [
+                {
+                  lineSpacingPx: 60,
+                  align: 'l',
+                  bullet: null,
+                  marginLeftPx: 0,
+                  indentPx: 0,
+                  endSizePx: 40,
+                  lines: [
+                    {
+                      sizePx: 40,
+                      runs: [
+                        {
+                          text: 'Gradient',
+                          style: {
+                            ...style,
+                            gradient: {
+                              angleDeg: 90,
+                              stops: [
+                                { pos: 0, color: { r: 37, g: 99, b: 235, a: 1 } },
+                                { pos: 1, color: { r: 219, g: 39, b: 119, a: 1 } },
+                              ],
+                            },
+                          },
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const xml = strFromU8(files['ppt/slides/slide1.xml']);
+    expect(xml).toMatch(
+      /<a:rPr [^>]*><a:gradFill [^>]*><a:gsLst><a:gs pos="0"><a:srgbClr val="2563EB">/,
+    );
+    expect(xml).not.toMatch(/<a:rPr [^>]*><a:solidFill>/);
   });
 
   it('highlights a run', () => {

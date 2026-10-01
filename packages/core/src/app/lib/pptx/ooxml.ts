@@ -463,7 +463,10 @@ function runXml(run: Run, ctx: EmitContext): string {
   const highlight = s.highlight
     ? `<a:highlight>${colorXml({ ...s.highlight, a: 1 })}</a:highlight>`
     : '';
-  return `<a:r><a:rPr ${attrs}>${outline}<a:solidFill>${colorXml(s.color)}</a:solidFill>${shadow}${highlight}<a:latin typeface="${font}"/><a:ea typeface="${font}"/><a:cs typeface="${font}"/>${link}</a:rPr><a:t>${escapeXml(run.text)}</a:t></a:r>`;
+  const fill = s.gradient
+    ? fillXml({ kind: 'gradient', ...s.gradient }, ctx)
+    : `<a:solidFill>${colorXml(s.color)}</a:solidFill>`;
+  return `<a:r><a:rPr ${attrs}>${outline}${fill}${shadow}${highlight}<a:latin typeface="${font}"/><a:ea typeface="${font}"/><a:cs typeface="${font}"/>${link}</a:rPr><a:t>${escapeXml(run.text)}</a:t></a:r>`;
 }
 
 function xfrmXml(node: { box: Rect; rotationDeg: number; flipV: boolean }): string {

@@ -235,3 +235,33 @@ test('uses string list markers and ::marker content as bullet characters', () =>
   expect(shapeNamed(xml, 'Text: String marker item')).toContain('<a:buChar char="✓"/>');
   expect(shapeNamed(xml, 'Text: Marker content item')).toContain('<a:buChar char="★"/>');
 });
+
+test('keeps text native inside glass and drop-shadow cards', () => {
+  const xml = slide(8);
+  expect(shapeNamed(xml, 'Text: Glass card text')).toContain('txBox="1"');
+  expect(shapeNamed(xml, 'Rounded Rectangle #glass')).toContain('<a:alpha val="25000"/>');
+  expect(shapeNamed(xml, 'Text: Drop shadow card')).not.toContain('<a:outerShdw');
+  expect(shapeNamed(xml, 'Rectangle #lifted')).toMatch(/<a:outerShdw blurRad="76200" dist="50800"/);
+});
+
+test('turns a drop-shadow on bare text into a text shadow', () => {
+  const xml = slide(8);
+  expect(shapeNamed(xml, 'Text: Glowing title')).toMatch(
+    /<a:outerShdw blurRad="127000" dist="0"[^>]*><a:srgbClr val="FF0000">/,
+  );
+  expect(shapes(xml).filter((s) => s.includes('<a:off x="6604000" y="508000"/>'))).toHaveLength(0);
+});
+
+test('paints background-clip text as a gradient run fill', () => {
+  const shape = shapeNamed(slide(8), 'Text: Gradient headline');
+  expect(shape).toMatch(/<a:gradFill [^>]*><a:gsLst><a:gs pos="0"><a:srgbClr val="2563EB">/);
+  expect(pictureAt(slide(8), 200, 400)).toBeUndefined();
+});
+
+test('applies inset and circle clip-paths without rasterising', () => {
+  const xml = slide(8);
+  const half = textOf(shapeNamed(xml, 'Text: Left half'));
+  expect(half.startsWith('Left half')).toBe(true);
+  expect(half).not.toContain('clipped away');
+  expect(shapeNamed(xml, 'Image: Avatar')).toContain('<a:prstGeom prst="ellipse">');
+});

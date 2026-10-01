@@ -9,6 +9,7 @@ import {
   multiply,
   normalizeRadii,
   parseBlurPx,
+  parseClipPath,
   parseColor,
   parseCornerRadius,
   parseFontFamilies,
@@ -282,23 +283,64 @@ describe('parsePosition', () => {
 
 describe('analyzeFilter', () => {
   it('treats settled entrance-animation filters as no filter at all', () => {
-    expect(analyzeFilter('none')).toEqual({ opacity: 1, raster: false });
-    expect(analyzeFilter('blur(0px)')).toEqual({ opacity: 1, raster: false });
-    expect(analyzeFilter('blur(0px) brightness(1) saturate(100%) hue-rotate(0deg)')).toEqual({
-      opacity: 1,
-      raster: false,
-    });
-    expect(analyzeFilter('drop-shadow(rgba(0, 0, 0, 0) 0px 0px 0px)')).toEqual({
-      opacity: 1,
-      raster: false,
-    });
+    const none = { opacity: 1, raster: false, dropShadow: null };
+    expect(analyzeFilter('none')).toEqual(none);
+    expect(analyzeFilter('blur(0px)')).toEqual(none);
+    expect(analyzeFilter('blur(0px) brightness(1) saturate(100%) hue-rotate(0deg)')).toEqual(none);
+    expect(analyzeFilter('drop-shadow(rgba(0, 0, 0, 0) 0px 0px 0px)')).toEqual(none);
   });
   it('folds opacity() into the element opacity', () => {
-    expect(analyzeFilter('opacity(0.5) blur(0px)')).toEqual({ opacity: 0.5, raster: false });
+    expect(analyzeFilter('opacity(0.5) blur(0px)')).toEqual({
+      opacity: 0.5,
+      raster: false,
+      dropShadow: null,
+    });
+  });
+  it('maps a single drop-shadow onto a shadow instead of a raster', () => {
+    const glow = analyzeFilter('drop-shadow(rgb(255, 0, 0) 0px 0px 28px)');
+    expect(glow.raster).toBe(false);
+    expect(glow.dropShadow).toMatchObject({ x: 0, y: 0, blur: 28, color: { r: 255, a: 1 } });
+    expect(
+      analyzeFilter(
+        'drop-shadow(rgb(0, 255, 255) 6px 0px 0px) drop-shadow(rgb(255, 0, 68) -6px 0px 0px)',
+      ).raster,
+    ).toBe(true);
   });
   it('rasterises filters PowerPoint has no equivalent for', () => {
     expect(analyzeFilter('blur(4px)').raster).toBe(true);
     expect(analyzeFilter('grayscale(1)').raster).toBe(true);
     expect(analyzeFilter('url("#noise")').raster).toBe(true);
+  });
+});
+
+describe('parseClipPath', () => {
+  it('turns inset() into edge offsets of the border box', () => {
+    expect(parseClipPath('inset(0px)', 200, 100)).toEqual({
+      kind: 'inset',
+      t: 0,
+      r: 0,
+      b: 0,
+      l: 0,
+    });
+    expect(parseClipPath('inset(0px 50% 0px 0px)', 200, 100)).toEqual({
+      kind: 'inset',
+      t: 0,
+      r: 100,
+      b: 0,
+      l: 0,
+    });
+    expect(parseClipPath('inset(10px 20px round 8px)', 200, 100)).toEqual({
+      kind: 'inset',
+      t: 10,
+      r: 20,
+      b: 10,
+      l: 20,
+    });
+  });
+  it('recognises a centred full-size circle or ellipse', () => {
+    expect(parseClipPath('circle(50% at 50% 50%)', 100, 100)).toEqual({ kind: 'ellipse' });
+    expect(parseClipPath('ellipse(50% 50% at 50% 50%)', 200, 100)).toEqual({ kind: 'ellipse' });
+    expect(parseClipPath('circle(30% at 10% 10%)', 100, 100)).toBeNull();
+    expect(parseClipPath('polygon(0 0, 100% 0, 0 100%)', 100, 100)).toBeNull();
   });
 });

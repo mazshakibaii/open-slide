@@ -18,6 +18,7 @@ const style = (over: Partial<RunStyle> = {}): RunStyle => ({
   kerning: true,
   link: null,
   highlight: null,
+  gradient: null,
   ...over,
 });
 

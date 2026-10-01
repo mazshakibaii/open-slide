@@ -85,6 +85,8 @@ export type RunStyle = {
   link: string | null;
   /** A plain inline background drawn behind the text (`<mark>`). */
   highlight: Rgba | null;
+  /** `background-clip: text` gradient, painted instead of `color`. */
+  gradient: { angleDeg: number; stops: GradientStop[] } | null;
 };
 
 export type Run = { text: string; style: RunStyle };
