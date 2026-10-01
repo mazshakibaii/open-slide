@@ -49,6 +49,10 @@ const Icons: Page = () => (
       <use href="#dot" x="60" />
       <rect className="accent" x="130" y="28" width="40" height="40" />
     </svg>
+    <svg style={at(520, 80)} width="120" height="96" viewBox="0 0 120 96" aria-label="Opaque badge">
+      <rect width="120" height="96" fill="#1e293b" />
+      <circle cx="60" cy="48" r="30" fill="#38bdf8" />
+    </svg>
   </div>
 );
 

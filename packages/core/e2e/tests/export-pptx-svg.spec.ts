@@ -59,3 +59,9 @@ test('inlines <use> references and class fills into the vector companion', () =>
   expect(svg).toContain('translate(60 0)');
   expect(svg).toContain('fill="#f59e0b"');
 });
+
+test('keeps an opaque SVG vector rather than flattening it to a JPEG', () => {
+  const badge = pictures(slide(1)).find((p) => p.includes('descr="Opaque badge"'));
+  expect(badge).toBeDefined();
+  expect(companionOf(1, badge as string)).toContain('<circle');
+});

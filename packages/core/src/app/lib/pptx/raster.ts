@@ -17,6 +17,8 @@ export type RasterRequest = {
   region: Rect;
   /** Trim transparent margins so the picture box hugs the painted pixels. */
   trim: boolean;
+  /** Encode PNG even when opaque: a vector companion needs a PNG fallback. */
+  lossless?: boolean;
 };
 
 export type RasterResult = { bytes: Uint8Array; rect: Rect; format: 'png' | 'jpeg' };
@@ -141,7 +143,7 @@ async function crop(
   const octx = out.getContext('2d');
   if (!octx) return null;
   octx.putImageData(data, -bounds.x, -bounds.y);
-  const opaque = isFullyOpaque(octx.getImageData(0, 0, bounds.w, bounds.h));
+  const opaque = !req.lossless && isFullyOpaque(octx.getImageData(0, 0, bounds.w, bounds.h));
   const blob = await new Promise<Blob | null>((resolve) =>
     opaque ? out.toBlob(resolve, 'image/jpeg', JPEG_QUALITY) : out.toBlob(resolve, 'image/png'),
   );

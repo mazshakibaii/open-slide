@@ -394,7 +394,11 @@ function requestRaster(ctx: Ctx, m: Measured, mode: RasterMode, vector = true): 
   }
   if (region.w <= 0 || region.h <= 0) return;
   const slot = pushSlot(ctx, null);
-  ctx.rasters.push({ slot, request: { target: m.el, mode, region, trim: !svg }, svg });
+  ctx.rasters.push({
+    slot,
+    request: { target: m.el, mode, region, trim: !svg, lossless: !!svg },
+    svg,
+  });
 }
 
 /**
