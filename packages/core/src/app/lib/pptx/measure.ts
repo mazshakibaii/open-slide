@@ -85,6 +85,7 @@ type Inherited = {
   clip: Rect | null;
   decoration: Decoration;
   layer: Layer;
+  link: string | null;
 };
 
 type Measured = {
@@ -150,6 +151,7 @@ export async function measurePage(options: MeasurePageOptions): Promise<SlideSce
       clip: slideClip,
       decoration: { underline: false, strike: false },
       layer,
+      link: null,
     });
     flushLayer(ctx, layer);
   } finally {
@@ -168,6 +170,7 @@ export async function measurePage(options: MeasurePageOptions): Promise<SlideSce
       entry.slot.node = {
         kind: 'picture',
         name: entry.request.target instanceof SVGElement ? 'Graphic' : 'Rendered image',
+        description: altTextOf(entry.request.target),
         box: result.rect,
         rotationDeg: 0,
         flipV: false,
@@ -477,6 +480,7 @@ function paintBlock(ctx: Ctx, el: Element, inherited: Inherited): void {
     opacity: m.opacity,
     clip: m.clip,
     decoration: mergeDecoration(inherited.decoration, cs),
+    link: linkOf(el) ?? inherited.link,
     layer: stacking ? { index: ctx.slots.length, items: [] } : inherited.layer,
   };
 
@@ -607,7 +611,7 @@ function collectInline(
     collectInline(
       ctx,
       child,
-      { ...inherited, opacity: m.opacity, decoration },
+      { ...inherited, opacity: m.opacity, decoration, link: linkOf(child) ?? inherited.link },
       atoms,
       blockChildren,
       inlineItems,
@@ -1008,7 +1012,10 @@ function paintImage(ctx: Ctx, m: Measured & { el: HTMLImageElement }): void {
   ctx.pending.push(
     ctx.images.fromUrl(src).then((loaded: LoadedImage | null) => {
       if (!loaded) return;
-      slot.node = makePicture(name, placement, m.world, loaded.id, alpha, geometry, null, null);
+      slot.node = {
+        ...makePicture(name, placement, m.world, loaded.id, alpha, geometry, null, null),
+        description: el.alt || null,
+      };
     }),
   );
 }
@@ -1112,8 +1119,12 @@ function collectTextAtoms(
   const preserve = whiteSpace.startsWith('pre') && whiteSpace !== 'pre-line';
   const style = runStyle(ctx, cs, inherited);
   const styleKey = JSON.stringify(style);
-  const transform = cs.textTransform;
-  const transformed = applyTextTransform(text, transform);
+  // Uppercase travels as a run property so the source text stays editable.
+  const transform = cs.textTransform.includes('uppercase') ? 'none' : cs.textTransform;
+  const transformed =
+    cs.fontVariantCaps === 'all-small-caps'
+      ? applyTextTransform(text, transform).toLowerCase()
+      : applyTextTransform(text, transform);
 
   if (rects.length === 1 && !(preserve && text.includes('\n'))) {
     atoms.push({
@@ -1176,7 +1187,30 @@ function runStyle(ctx: Ctx, cs: CSSStyleDeclaration, inherited: Inherited): RunS
       strokeColor && isVisibleColor(strokeColor)
         ? { width: strokeWidth, color: withAlpha(strokeColor, inherited.opacity) }
         : null,
+    caps: capsOf(cs),
+    kerning: cs.fontKerning !== 'none',
+    link: inherited.link,
   };
+}
+
+function capsOf(cs: CSSStyleDeclaration): RunStyle['caps'] {
+  if (cs.textTransform.includes('uppercase')) return 'all';
+  return /small-caps|petite-caps|unicase/.test(cs.fontVariantCaps) ? 'small' : null;
+}
+
+function linkOf(el: Element): string | null {
+  if (!(el instanceof HTMLAnchorElement) || !el.hasAttribute('href')) return null;
+  return /^(https?|mailto):/i.test(el.href) ? el.href : null;
+}
+
+function altTextOf(el: Element): string | null {
+  const label =
+    el.getAttribute('aria-label') ??
+    (el instanceof HTMLImageElement ? el.alt : null) ??
+    el.querySelector(':scope > title')?.textContent ??
+    el.textContent;
+  const text = label?.replace(/\s+/g, ' ').trim();
+  return text ? text : null;
 }
 
 function alignOf(cs: CSSStyleDeclaration): Paragraph['align'] {

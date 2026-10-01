@@ -92,4 +92,15 @@ const Stacking: Page = () => (
   </div>
 );
 
-export default [First, Unpositioned, Effects, Stacking] satisfies Page[];
+const Runs: Page = () => (
+  <div style={{ ...page, position: 'relative' }}>
+    <p style={at(80, 80)}>
+      Read the <a href="https://example.com/docs">documentation</a> first.
+    </p>
+    <h2 style={{ ...at(80, 200), textTransform: 'uppercase' }}>Shouting label</h2>
+    <p style={{ ...at(80, 300), fontVariant: 'small-caps' }}>Small caps label</p>
+    <img src={photo} alt="Gradient swatch" style={{ ...at(80, 400), width: 80, height: 40 }} />
+  </div>
+);
+
+export default [First, Unpositioned, Effects, Stacking, Runs] satisfies Page[];

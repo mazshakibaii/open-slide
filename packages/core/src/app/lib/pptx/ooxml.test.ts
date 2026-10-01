@@ -24,6 +24,9 @@ const style: RunStyle = {
   baselineShift: null,
   shadow: null,
   outline: null,
+  caps: null,
+  kerning: false,
+  link: null,
 };
 
 const deck: DeckScene = {
@@ -227,5 +230,82 @@ describe('geometry guard', () => {
     const slide = strFromU8(files['ppt/slides/slide1.xml']);
     expect(slide).not.toContain('NaN');
     expect(slide).not.toContain('Image: broken');
+  });
+});
+
+describe('runs and pictures', () => {
+  const files = buildPptxFiles({
+    images: [{ id: 1, bytes: PNG_1PX, format: 'png' }],
+    slides: [
+      {
+        background: null,
+        notes: null,
+        nodes: [
+          {
+            kind: 'text',
+            name: 'Text: Docs',
+            box: { x: 0, y: 0, w: 400, h: 60 },
+            rotationDeg: 0,
+            flipV: false,
+            paragraphs: [
+              {
+                lineSpacingPx: 60,
+                align: 'l',
+                bullet: null,
+                marginLeftPx: 0,
+                indentPx: 0,
+                endSizePx: 40,
+                lines: [
+                  {
+                    sizePx: 40,
+                    runs: [
+                      { text: 'Read the ', style: { ...style, kerning: true, caps: 'all' } },
+                      {
+                        text: 'docs & guide',
+                        style: { ...style, link: 'https://example.com/a?b=1&c=2' },
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            kind: 'picture',
+            name: 'Image: chart',
+            description: 'Revenue by "quarter"',
+            box: { x: 0, y: 100, w: 100, h: 100 },
+            rotationDeg: 0,
+            flipV: false,
+            imageId: 1,
+            crop: null,
+            alpha: 1,
+            geometry: { kind: 'rect' },
+            outline: null,
+            shadow: null,
+          },
+        ],
+      },
+    ],
+  });
+  const slide = strFromU8(files['ppt/slides/slide1.xml']);
+  const rels = strFromU8(files['ppt/slides/_rels/slide1.xml.rels']);
+
+  it('writes caps and kerning as run properties rather than baked text', () => {
+    expect(slide).toContain('cap="all"');
+    expect(slide).toContain('kern="100"');
+    expect(slide).toContain('<a:t>Read the </a:t>');
+  });
+
+  it('links a run through an external relationship and keeps its own colour', () => {
+    const link = /<a:hlinkClick r:id="(rId\d+)">(.*?)<\/a:hlinkClick>/.exec(slide);
+    expect(link?.[2]).toContain('<ahyp:hlinkClr');
+    expect(rels).toContain(
+      `<Relationship Id="${link?.[1]}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com/a?b=1&amp;c=2" TargetMode="External"/>`,
+    );
+  });
+
+  it('carries alt text as the picture description', () => {
+    expect(slide).toContain('name="Image: chart" descr="Revenue by &quot;quarter&quot;"');
   });
 });

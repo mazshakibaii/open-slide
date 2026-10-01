@@ -105,3 +105,26 @@ test('paints negative z-index children beneath their stacking context content', 
     order(xml, 'Rectangle #panel'),
   );
 });
+
+test('links runs to their href', () => {
+  const xml = slide(5);
+  const rels = strFromU8(parts['ppt/slides/_rels/slide5.xml.rels']);
+  const run =
+    /<a:r><a:rPr [^>]*>(?:(?!<\/a:rPr>).)*<a:hlinkClick r:id="(rId\d+)"[\s\S]*?<a:t>documentation<\/a:t>/.exec(
+      xml,
+    );
+  expect(run).not.toBeNull();
+  expect(rels).toContain(`Id="${run?.[1]}"`);
+  expect(rels).toContain('Target="https://example.com/docs" TargetMode="External"');
+});
+
+test('keeps source case and exports capitals as a run property', () => {
+  const xml = slide(5);
+  expect(shapeNamed(xml, 'Text: Shouting label')).toContain('cap="all"');
+  expect(xml).toContain('<a:t>Shouting label</a:t>');
+  expect(shapeNamed(xml, 'Text: Small caps label')).toContain('cap="small"');
+});
+
+test('carries image alt text as the picture description', () => {
+  expect(slide(5)).toContain('name="Image: Gradient swatch" descr="Gradient swatch"');
+});

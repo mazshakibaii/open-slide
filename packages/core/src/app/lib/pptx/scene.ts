@@ -54,6 +54,8 @@ export type ShapeNode = NodeBase & {
 
 export type PictureNode = NodeBase & {
   kind: 'picture';
+  /** Alt text for screen readers. */
+  description?: string | null;
   imageId: number;
   crop: Crop | null;
   alpha: number;
@@ -76,6 +78,11 @@ export type RunStyle = {
   baselineShift: 'super' | 'sub' | null;
   shadow: TextShadow | null;
   outline: { width: number; color: Rgba } | null;
+  /** Rendered capitals that the source text does not carry (`text-transform` / `font-variant`). */
+  caps: 'all' | 'small' | null;
+  kerning: boolean;
+  /** Absolute URL of the enclosing link. */
+  link: string | null;
 };
 
 export type Run = { text: string; style: RunStyle };

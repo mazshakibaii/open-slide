@@ -14,6 +14,9 @@ const style = (over: Partial<RunStyle> = {}): RunStyle => ({
   baselineShift: null,
   shadow: null,
   outline: null,
+  caps: null,
+  kerning: true,
+  link: null,
   ...over,
 });
 
