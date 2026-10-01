@@ -339,3 +339,33 @@ describe('runs and pictures', () => {
     expect(slide).toContain('name="Image: chart" descr="Revenue by &quot;quarter&quot;"');
   });
 });
+
+describe('speaker notes', () => {
+  const notes = (markdown: string) =>
+    strFromU8(
+      buildPptxFiles({ images: [], slides: [{ background: null, notes: markdown, nodes: [] }] })[
+        'ppt/notesSlides/notesSlide1.xml'
+      ],
+    );
+
+  it('renders the Markdown the presenter renders instead of its syntax', () => {
+    const xml = notes('Open with **the claim**, then *pause* for `questions`.');
+    expect(xml).not.toContain('**');
+    expect(xml).toMatch(/<a:rPr [^>]*b="1"[^>]*\/?>(<\/a:rPr>)?<a:t>the claim<\/a:t>/);
+    expect(xml).toMatch(/<a:rPr [^>]*i="1"[^>]*\/?>(<\/a:rPr>)?<a:t>pause<\/a:t>/);
+    expect(xml).toMatch(/<a:latin typeface="Consolas"\/><\/a:rPr><a:t>questions<\/a:t>/);
+  });
+
+  it('turns list lines into bulleted and numbered paragraphs', () => {
+    const xml = notes('- show the chart\n- take questions\n\n1. first\n2. second');
+    expect(xml.match(/<a:buChar char="•"\/>/g)).toHaveLength(2);
+    expect(xml.match(/<a:buAutoNum type="arabicPeriod"\/>/g)).toHaveLength(2);
+    expect(xml).toContain('<a:t>show the chart</a:t>');
+  });
+
+  it('keeps line breaks inside a paragraph and bolds headings', () => {
+    const xml = notes('# Intro\nline one\nline two');
+    expect(xml).toMatch(/b="1"[^>]*\/?>(<\/a:rPr>)?<a:t>Intro<\/a:t>/);
+    expect(xml).toContain('<a:t>line one</a:t></a:r><a:br>');
+  });
+});

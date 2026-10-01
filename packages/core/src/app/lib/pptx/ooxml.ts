@@ -1,4 +1,5 @@
 import { strToU8 } from 'fflate';
+import { type NoteInline, parseNoteMarkdown } from '../note-markdown';
 import { type Radii, type Rgba, toHex } from './css';
 import type {
   Bullet,
@@ -239,15 +240,62 @@ function notesMasterRelsXml(): string {
   return `${XML_DECL}<Relationships xmlns="${REL_NS}"><Relationship Id="rId1" Type="${OD_REL}/theme" Target="../theme/theme2.xml"/></Relationships>`;
 }
 
-function notesSlideXml(notes: string): string {
-  const paragraphs = notes
-    .split(/\r?\n/)
-    .map((line) =>
-      line.length === 0
-        ? `<a:p><a:endParaRPr lang="en-US"/></a:p>`
-        : `<a:p><a:r><a:rPr lang="en-US" dirty="0"/><a:t>${escapeXml(line)}</a:t></a:r></a:p>`,
-    )
+const NOTE_SIZES: Record<1 | 2 | 3, number> = { 1: 1800, 2: 1600, 3: 1400 };
+
+type NoteRunStyle = { bold?: boolean; italic?: boolean; code?: boolean; size?: number };
+
+function noteRunsXml(inlines: NoteInline[], style: NoteRunStyle = {}): string {
+  return inlines
+    .map((inline) => {
+      if (inline.type === 'strong') return noteRunsXml(inline.children, { ...style, bold: true });
+      if (inline.type === 'em') return noteRunsXml(inline.children, { ...style, italic: true });
+      const code = inline.type === 'code' || style.code;
+      const attrs = [
+        'lang="en-US"',
+        style.size ? `sz="${style.size}"` : '',
+        style.bold ? 'b="1"' : '',
+        style.italic ? 'i="1"' : '',
+        'dirty="0"',
+      ]
+        .filter(Boolean)
+        .join(' ');
+      const rPr = code
+        ? `<a:rPr ${attrs}><a:latin typeface="Consolas"/></a:rPr>`
+        : `<a:rPr ${attrs}/>`;
+      return `<a:r>${rPr}<a:t>${escapeXml(inline.text)}</a:t></a:r>`;
+    })
     .join('');
+}
+
+function notesParagraphsXml(notes: string): string {
+  const blocks = parseNoteMarkdown(notes.replace(/\r\n?/g, '\n'));
+  const out: string[] = [];
+  for (const block of blocks) {
+    if (block.type === 'heading') {
+      out.push(
+        `<a:p>${noteRunsXml(block.children, { bold: true, size: NOTE_SIZES[block.level] })}</a:p>`,
+      );
+    } else if (block.type === 'paragraph') {
+      const body = block.lines
+        .map((line) => noteRunsXml(line))
+        .join('<a:br><a:rPr lang="en-US"/></a:br>');
+      out.push(`<a:p>${body}</a:p>`);
+    } else {
+      const marker = block.ordered
+        ? '<a:buFont typeface="+mj-lt"/><a:buAutoNum type="arabicPeriod"/>'
+        : '<a:buFont typeface="Arial"/><a:buChar char="•"/>';
+      for (const item of block.items) {
+        out.push(
+          `<a:p><a:pPr marL="285750" indent="-285750">${marker}</a:pPr>${noteRunsXml(item)}</a:p>`,
+        );
+      }
+    }
+  }
+  return out.length > 0 ? out.join('') : '<a:p><a:endParaRPr lang="en-US"/></a:p>';
+}
+
+function notesSlideXml(notes: string): string {
+  const paragraphs = notesParagraphsXml(notes);
   return `${XML_DECL}<p:notes xmlns:a="${NS_A}" xmlns:r="${OD_REL}" xmlns:p="${NS_P}"><p:cSld><p:spTree>${EMPTY_GROUP}<p:sp><p:nvSpPr><p:cNvPr id="2" name="Slide Image Placeholder 1"/><p:cNvSpPr><a:spLocks noGrp="1" noRot="1" noChangeAspect="1"/></p:cNvSpPr><p:nvPr><p:ph type="sldImg"/></p:nvPr></p:nvSpPr><p:spPr/></p:sp><p:sp><p:nvSpPr><p:cNvPr id="3" name="Notes Placeholder 2"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/>${paragraphs}</p:txBody></p:sp></p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:notes>`;
 }
 
