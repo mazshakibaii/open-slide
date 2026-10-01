@@ -15,6 +15,7 @@ const PNG_1PX = Uint8Array.from(
 const style: RunStyle = {
   font: 'Inter',
   sizePx: 40,
+  weight: 400,
   bold: true,
   italic: false,
   underline: false,
@@ -632,5 +633,41 @@ describe('underlines', () => {
     const xml = strFromU8(files['ppt/slides/slide1.xml']);
     expect(xml).toContain('u="wavy"');
     expect(xml).toMatch(/<a:uFill><a:solidFill><a:srgbClr val="EF4444">/);
+  });
+});
+
+describe('embedded fonts', () => {
+  const face = (n: number) => Uint8Array.of(0, 1, 0, 0, n);
+  const files = buildPptxFiles({
+    images: [],
+    slides: [{ background: null, notes: 'note', nodes: [] }],
+    fonts: [
+      { typeface: 'Fixture', slot: 'regular', bytes: face(1) },
+      { typeface: 'Fixture Medium', slot: 'regular', bytes: face(2) },
+      { typeface: 'Fixture', slot: 'bold', bytes: face(3) },
+    ],
+  });
+  const text = (name: string) => strFromU8(files[name]);
+
+  it('stores each face as a font part', () => {
+    expect(files['ppt/fonts/font1.fntdata']).toEqual(face(1));
+    expect(files['ppt/fonts/font3.fntdata']).toEqual(face(3));
+    expect(text('[Content_Types].xml')).toContain(
+      '<Default Extension="fntdata" ContentType="application/x-fontdata"/>',
+    );
+  });
+
+  it('lists faces per typeface and keeps them when PowerPoint re-saves', () => {
+    const presentation = text('ppt/presentation.xml');
+    const rels = text('ppt/_rels/presentation.xml.rels');
+    const id = (target: string) =>
+      new RegExp(`Id="(rId\\d+)" Type="[^"]+/font" Target="${target}"`).exec(rels)?.[1];
+    expect(presentation).toContain(
+      `<p:embeddedFontLst><p:embeddedFont><p:font typeface="Fixture"/><p:regular r:id="${id('fonts/font1.fntdata')}"/><p:bold r:id="${id('fonts/font3.fntdata')}"/></p:embeddedFont><p:embeddedFont><p:font typeface="Fixture Medium"/><p:regular r:id="${id('fonts/font2.fntdata')}"/></p:embeddedFont></p:embeddedFontLst>`,
+    );
+    expect(presentation).toMatch(/<p:notesSz [^>]*\/><p:embeddedFontLst>/);
+    expect(presentation).toContain('embedTrueTypeFonts="1"');
+    expect(presentation).not.toContain('saveSubsetFonts');
+    expect(new Set(rels.match(/Id="rId\d+"/g)).size).toBe(rels.match(/Id="rId\d+"/g)?.length);
   });
 });

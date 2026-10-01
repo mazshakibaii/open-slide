@@ -5,6 +5,7 @@ import { type Atom, buildSegments, groupIntoLines } from './text-lines';
 const style = (over: Partial<RunStyle> = {}): RunStyle => ({
   font: 'Arial',
   sizePx: 40,
+  weight: 400,
   bold: false,
   italic: false,
   underline: false,

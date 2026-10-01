@@ -4,7 +4,9 @@ import { type Radii, type Rgba, toHex } from './css';
 import type {
   Bullet,
   DeckScene,
+  EmbeddedFont,
   Fill,
+  FontSlot,
   Geometry,
   ImageFormat,
   Outline,
@@ -69,8 +71,12 @@ export function buildPptxFiles(deck: DeckScene): Record<string, Uint8Array> {
 
   files['[Content_Types].xml'] = strToU8(contentTypesXml(deck, hasNotes));
   files['_rels/.rels'] = strToU8(rootRelsXml());
-  files['ppt/presentation.xml'] = strToU8(presentationXml(n, hasNotes));
-  files['ppt/_rels/presentation.xml.rels'] = strToU8(presentationRelsXml(n, hasNotes));
+  const fonts = deck.fonts ?? [];
+  files['ppt/presentation.xml'] = strToU8(presentationXml(n, hasNotes, fonts));
+  files['ppt/_rels/presentation.xml.rels'] = strToU8(presentationRelsXml(n, hasNotes, fonts));
+  fonts.forEach((font, i) => {
+    files[`ppt/fonts/font${i + 1}.fntdata`] = font.bytes;
+  });
   files['ppt/presProps.xml'] = strToU8(presPropsXml());
   files['ppt/theme/theme1.xml'] = strToU8(themeXml());
   files['ppt/slideMasters/slideMaster1.xml'] = strToU8(slideMasterXml());
@@ -151,6 +157,9 @@ function contentTypesXml(deck: DeckScene, hasNotes: boolean): string {
       (ext) => `<Default Extension="${ext}" ContentType="${CONTENT_TYPES[ext]}"/>`,
     ),
   ];
+  if (deck.fonts?.length) {
+    defaults.push('<Default Extension="fntdata" ContentType="application/x-fontdata"/>');
+  }
   const overrides = [
     override('/ppt/presentation.xml', `${CT_PREFIX}.presentation.main+xml`),
     override('/ppt/presProps.xml', `${CT_PREFIX}.presProps+xml`),
@@ -183,7 +192,30 @@ function rootRelsXml(): string {
   return `${XML_DECL}<Relationships xmlns="${REL_NS}"><Relationship Id="rId1" Type="${OD_REL}/officeDocument" Target="ppt/presentation.xml"/></Relationships>`;
 }
 
-function presentationXml(n: number, hasNotes: boolean): string {
+function fontRelId(n: number, hasNotes: boolean, index: number): string {
+  return `rId${n + 3 + (hasNotes ? 1 : 0) + index}`;
+}
+
+const SLOT_ORDER: FontSlot[] = ['regular', 'bold', 'italic', 'boldItalic'];
+
+function embeddedFontListXml(fonts: EmbeddedFont[], n: number, hasNotes: boolean): string {
+  if (fonts.length === 0) return '';
+  const byTypeface = new Map<string, Map<FontSlot, string>>();
+  fonts.forEach((font, i) => {
+    const slots = byTypeface.get(font.typeface) ?? new Map<FontSlot, string>();
+    if (!slots.has(font.slot)) slots.set(font.slot, fontRelId(n, hasNotes, i));
+    byTypeface.set(font.typeface, slots);
+  });
+  const entries = [...byTypeface].map(([typeface, slots]) => {
+    const refs = SLOT_ORDER.filter((slot) => slots.has(slot))
+      .map((slot) => `<p:${slot} r:id="${slots.get(slot)}"/>`)
+      .join('');
+    return `<p:embeddedFont><p:font typeface="${escapeXml(typeface)}"/>${refs}</p:embeddedFont>`;
+  });
+  return `<p:embeddedFontLst>${entries.join('')}</p:embeddedFontLst>`;
+}
+
+function presentationXml(n: number, hasNotes: boolean, fonts: EmbeddedFont[]): string {
   const sldIds = Array.from(
     { length: n },
     (_, i) => `<p:sldId id="${256 + i}" r:id="rId${i + 3}"/>`,
@@ -191,10 +223,10 @@ function presentationXml(n: number, hasNotes: boolean): string {
   const notesMaster = hasNotes
     ? `<p:notesMasterIdLst><p:notesMasterId r:id="rId${n + 3}"/></p:notesMasterIdLst>`
     : '';
-  return `${XML_DECL}<p:presentation xmlns:a="${NS_A}" xmlns:r="${OD_REL}" xmlns:p="${NS_P}" saveSubsetFonts="1"><p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>${notesMaster}<p:sldIdLst>${sldIds}</p:sldIdLst><p:sldSz cx="${SLIDE_EMU_W}" cy="${SLIDE_EMU_H}"/><p:notesSz cx="6858000" cy="9144000"/></p:presentation>`;
+  return `${XML_DECL}<p:presentation xmlns:a="${NS_A}" xmlns:r="${OD_REL}" xmlns:p="${NS_P}"${fonts.length > 0 ? ' embedTrueTypeFonts="1"' : ''}><p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>${notesMaster}<p:sldIdLst>${sldIds}</p:sldIdLst><p:sldSz cx="${SLIDE_EMU_W}" cy="${SLIDE_EMU_H}"/><p:notesSz cx="6858000" cy="9144000"/>${embeddedFontListXml(fonts, n, hasNotes)}</p:presentation>`;
 }
 
-function presentationRelsXml(n: number, hasNotes: boolean): string {
+function presentationRelsXml(n: number, hasNotes: boolean, fonts: EmbeddedFont[]): string {
   const rels = [
     `<Relationship Id="rId1" Type="${OD_REL}/slideMaster" Target="slideMasters/slideMaster1.xml"/>`,
     `<Relationship Id="rId2" Type="${OD_REL}/presProps" Target="presProps.xml"/>`,
@@ -209,6 +241,11 @@ function presentationRelsXml(n: number, hasNotes: boolean): string {
       `<Relationship Id="rId${n + 3}" Type="${OD_REL}/notesMaster" Target="notesMasters/notesMaster1.xml"/>`,
     );
   }
+  fonts.forEach((_, i) => {
+    rels.push(
+      `<Relationship Id="${fontRelId(n, hasNotes, i)}" Type="${OD_REL}/font" Target="fonts/font${i + 1}.fntdata"/>`,
+    );
+  });
   return `${XML_DECL}<Relationships xmlns="${REL_NS}">${rels.join('')}</Relationships>`;
 }
 

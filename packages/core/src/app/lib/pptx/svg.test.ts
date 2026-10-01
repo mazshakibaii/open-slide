@@ -52,6 +52,7 @@ describe('textNodeFor', () => {
   const style = {
     font: 'Arial',
     sizePx: 40,
+    weight: 400,
     bold: false,
     italic: false,
     underline: false,

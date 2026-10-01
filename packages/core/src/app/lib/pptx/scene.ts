@@ -71,6 +71,8 @@ export type TextShadow = { blur: number; dist: number; dirDeg: number; color: Rg
 export type RunStyle = {
   font: string;
   sizePx: number;
+  /** CSS font-weight; picks the face to embed. */
+  weight: number;
   bold: boolean;
   italic: boolean;
   underline: boolean;
@@ -153,7 +155,13 @@ export type SlideScene = {
   notes: string | null;
 };
 
+export type FontSlot = 'regular' | 'bold' | 'italic' | 'boldItalic';
+
+/** A face carried in the file, under the typeface name its runs use. */
+export type EmbeddedFont = { typeface: string; slot: FontSlot; bytes: Uint8Array };
+
 export type DeckScene = {
   slides: SlideScene[];
   images: SceneImage[];
+  fonts?: EmbeddedFont[];
 };
