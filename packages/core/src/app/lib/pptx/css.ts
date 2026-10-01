@@ -354,7 +354,37 @@ export function parseLinearGradient(
     running = pos;
   }
   const stops = raw.map((s) => ({ color: s.color, pos: clamp01(s.pos as number) }));
-  return { angleDeg: ((angle % 360) + 360) % 360, stops };
+  return { angleDeg: ((angle % 360) + 360) % 360, stops: unpremultiplyStops(stops) };
+}
+
+/**
+ * CSS interpolates gradients in premultiplied alpha, so `transparent` (black at
+ * zero alpha) fades without darkening. PowerPoint interpolates the channels
+ * apart, so a clear stop takes its visible neighbour's colour — one per side
+ * when the two neighbours differ.
+ */
+export function unpremultiplyStops(stops: GradientStop[]): GradientStop[] {
+  const visible = (s: GradientStop) => s.color.a > 0.002;
+  const clear = (c: Rgba): Rgba => ({ r: c.r, g: c.g, b: c.b, a: 0 });
+  const out: GradientStop[] = [];
+  stops.forEach((stop, i) => {
+    if (visible(stop)) {
+      out.push(stop);
+      return;
+    }
+    const prev = stops.slice(0, i).reverse().find(visible);
+    const next = stops.slice(i + 1).find(visible);
+    if (prev && next && toHex(prev.color) !== toHex(next.color)) {
+      out.push(
+        { pos: stop.pos, color: clear(prev.color) },
+        { pos: stop.pos, color: clear(next.color) },
+      );
+      return;
+    }
+    const source = prev ?? next;
+    out.push({ pos: stop.pos, color: source ? clear(source.color) : stop.color });
+  });
+  return out;
 }
 
 function parseStopPosition(token: string, length: number): number | null {

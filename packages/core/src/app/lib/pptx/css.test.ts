@@ -113,6 +113,28 @@ describe('parseLinearGradient', () => {
     expect(angle('to bottom left')).toBeCloseTo(191.31, 2);
     expect(angle('to top left')).toBeCloseTo(348.69, 2);
   });
+  it('fades transparent stops from their neighbour instead of from black', () => {
+    const fade = parseLinearGradient(
+      'linear-gradient(to right, rgb(255, 255, 255), rgba(0, 0, 0, 0))',
+      100,
+      50,
+    );
+    expect(fade?.stops).toEqual([
+      { pos: 0, color: { r: 255, g: 255, b: 255, a: 1 } },
+      { pos: 1, color: { r: 255, g: 255, b: 255, a: 0 } },
+    ]);
+    const through = parseLinearGradient(
+      'linear-gradient(to right, rgb(255, 0, 0), rgba(0, 0, 0, 0), rgb(0, 0, 255))',
+      100,
+      50,
+    );
+    expect(through?.stops).toEqual([
+      { pos: 0, color: { r: 255, g: 0, b: 0, a: 1 } },
+      { pos: 0.5, color: { r: 255, g: 0, b: 0, a: 0 } },
+      { pos: 0.5, color: { r: 0, g: 0, b: 255, a: 0 } },
+      { pos: 1, color: { r: 0, g: 0, b: 255, a: 1 } },
+    ]);
+  });
   it('converts px stop positions against the gradient line', () => {
     const g = parseLinearGradient(
       'linear-gradient(to right, rgb(0, 0, 0) 25px, rgb(255, 255, 255) 75px)',
