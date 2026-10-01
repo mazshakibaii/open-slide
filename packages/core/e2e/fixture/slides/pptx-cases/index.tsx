@@ -4,7 +4,7 @@ import photo from './assets/photo.png';
 
 export const meta: SlideMeta = {
   title: 'PPTX Cases',
-  createdAt: '2026-10-01T00:00:00.000Z',
+  createdAt: '2026-01-02T12:00:00.000Z',
 };
 
 const page = {
