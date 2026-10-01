@@ -87,6 +87,8 @@ type Inherited = {
   world: Mat;
   opacity: number;
   clip: Rect | null;
+  /** Corner radii of the clip when a rounded `overflow: hidden` box set it. */
+  clipRadii: Radii | null;
   decoration: Decoration;
   layer: Layer;
   link: string | null;
@@ -103,6 +105,8 @@ type Measured = {
   world: Mat;
   opacity: number;
   clip: Rect | null;
+  /** Corner radii of the clip when a rounded `overflow: hidden` box set it. */
+  clipRadii: Radii | null;
   /** A `drop-shadow()` filter on this element or an ancestor without a box of its own. */
   dropShadow: Shadow | null;
   /** `clip-path: circle()/ellipse()` centred on the box. */
@@ -170,6 +174,7 @@ async function measureMaterialized(options: MeasurePageOptions): Promise<SlideSc
       world: IDENTITY,
       opacity: 1,
       clip: slideClip,
+      clipRadii: null,
       decoration: { underline: false, strike: false },
       layer,
       link: null,
@@ -322,6 +327,7 @@ function measureElement(
   const opacity = parent.opacity * Number.parseFloat(cs.opacity) * filter.opacity;
   const clipPath = cs.clipPath === 'none' ? null : parseClipPath(cs.clipPath, rect.w, rect.h);
   let clip = parent.clip;
+  let clipRadii = parent.clipRadii;
   const overflow = cs.overflow;
   const clips =
     overflow.includes('hidden') ||
@@ -330,9 +336,15 @@ function measureElement(
     overflow.includes('scroll');
   if (clips && isIdentity(world)) {
     const padding = paddingBox(rect, cs);
-    clip = clip ? intersect(clip, padding) : padding;
+    const next = clip ? intersect(clip, padding) : padding;
+    const own = sameRect(next, padding)
+      ? shrinkRadii(radiiOf(cs, rect.w, rect.h), parsePx(cs.borderTopWidth))
+      : null;
+    clipRadii = mergeCorners(own, clipCorners(next, clip, clipRadii));
+    clip = next;
   } else if (clips) {
     clip = null;
+    clipRadii = null;
   }
   if (clipPath?.kind === 'inset' && isIdentity(world)) {
     const inset = {
@@ -341,7 +353,9 @@ function measureElement(
       w: Math.max(0, rect.w - clipPath.l - clipPath.r),
       h: Math.max(0, rect.h - clipPath.t - clipPath.b),
     };
-    clip = clip ? intersect(clip, inset) : inset;
+    const next = clip ? intersect(clip, inset) : inset;
+    clipRadii = clipCorners(next, clip, clipRadii);
+    clip = next;
   }
   return {
     el,
@@ -350,6 +364,7 @@ function measureElement(
     world,
     opacity,
     clip,
+    clipRadii,
     dropShadow: filter.dropShadow ?? parent.dropShadow,
     ellipse: clipPath?.kind === 'ellipse',
   };
@@ -366,6 +381,45 @@ function paddingBox(rect: Rect, cs: CSSStyleDeclaration): Rect {
     w: Math.max(0, rect.w - l - r),
     h: Math.max(0, rect.h - t - b),
   };
+}
+
+function sameRect(a: Rect, b: Rect): boolean {
+  return (
+    Math.abs(a.x - b.x) < 0.5 &&
+    Math.abs(a.y - b.y) < 0.5 &&
+    Math.abs(a.w - b.w) < 0.5 &&
+    Math.abs(a.h - b.h) < 0.5
+  );
+}
+
+/** The clip's rounded corners that a box sitting in them would have cut off. */
+function clipCorners(rect: Rect, clip: Rect | null, radii: Radii | null): Radii | null {
+  if (!clip || !radii) return null;
+  const near = (a: number, b: number) => Math.abs(a - b) <= 1;
+  const left = near(rect.x, clip.x);
+  const right = near(rect.x + rect.w, clip.x + clip.w);
+  const top = near(rect.y, clip.y);
+  const bottom = near(rect.y + rect.h, clip.y + clip.h);
+  const none = { x: 0, y: 0 };
+  const corners: Radii = [
+    top && left ? radii[0] : none,
+    top && right ? radii[1] : none,
+    bottom && right ? radii[2] : none,
+    bottom && left ? radii[3] : none,
+  ];
+  return hasRadius(corners) ? corners : null;
+}
+
+function mergeCorners(a: Radii | null, b: Radii | null): Radii | null {
+  if (!a || !b) return a && hasRadius(a) ? a : b;
+  const merged = a.map((c, i) => ({ x: Math.max(c.x, b[i].x), y: Math.max(c.y, b[i].y) })) as Radii;
+  return hasRadius(merged) ? merged : null;
+}
+
+function withClipCorners(own: Radii, rect: Rect, m: Measured): Radii {
+  const corners = isIdentity(m.world) ? clipCorners(rect, m.clip, m.clipRadii) : null;
+  const merged = mergeCorners(own, corners);
+  return merged ? normalizeRadii(merged, rect.w, rect.h) : own;
 }
 
 function intersect(a: Rect, b: Rect): Rect {
@@ -516,6 +570,7 @@ function paintBlock(ctx: Ctx, el: Element, inherited: Inherited): void {
       world: IDENTITY,
       opacity: inherited.opacity,
       clip: inherited.clip,
+      clipRadii: inherited.clipRadii,
       dropShadow: null,
       ellipse: false,
     };
@@ -546,6 +601,7 @@ function paintBlock(ctx: Ctx, el: Element, inherited: Inherited): void {
     world: m.world,
     opacity: m.opacity,
     clip: m.clip,
+    clipRadii: m.clipRadii,
     decoration: mergeDecoration(inherited.decoration, cs),
     link: linkOf(el) ?? inherited.link,
     highlight: null,
@@ -944,6 +1000,9 @@ function paintBoxRect(ctx: Ctx, m: Measured, rect: Rect): void {
   const finalRect = canClip ? clipRect(shapeRect, m.clip, world) : shapeRect;
   if (finalRect.w < MIN_SIZE && finalRect.h < MIN_SIZE) return;
   if (finalRect.w <= 0 || finalRect.h <= 0) return;
+  const clippedGeometry = canClip
+    ? geometryFor(withClipCorners(shapeRadii, finalRect, m), finalRect.w, finalRect.h)
+    : geometry;
 
   const nodes: ShapeNode[] = [];
   const baseName = shapeName(el, geometry);
@@ -953,7 +1012,7 @@ function paintBoxRect(ctx: Ctx, m: Measured, rect: Rect): void {
         baseName,
         finalRect,
         world,
-        geometry,
+        clippedGeometry,
         null,
         uniform ? outline : null,
         outer ? toShadowEffect(outer, opacity) : null,
@@ -967,7 +1026,7 @@ function paintBoxRect(ctx: Ctx, m: Measured, rect: Rect): void {
         baseName,
         finalRect,
         world,
-        geometry,
+        clippedGeometry,
         fill,
         last && uniform ? outline : null,
         i === 0 && outer
@@ -1169,7 +1228,11 @@ function paintImage(ctx: Ctx, m: Measured & { el: HTMLImageElement }): void {
   const inset = bgOrBorder ? Math.max(...borderSides(cs, ctx.color).map((side) => side.width)) : 0;
   const geometry: Geometry = m.ellipse
     ? { kind: 'ellipse' }
-    : geometryFor(shrinkRadii(radii, inset), placement.rect.w, placement.rect.h);
+    : geometryFor(
+        withClipCorners(shrinkRadii(radii, inset), placement.rect, m),
+        placement.rect.w,
+        placement.rect.h,
+      );
   const shadow = m.dropShadow ? toShadowEffect(m.dropShadow, m.opacity) : null;
   const slot = pushSlot(ctx, null);
   const alpha = m.opacity;
@@ -1776,6 +1839,7 @@ function plainListItems(
       ...inherited,
       opacity: m.opacity,
       clip: m.clip,
+      clipRadii: m.clipRadii,
       decoration: mergeDecoration(inherited.decoration, cs),
       link: linkOf(li) ?? inherited.link,
       highlight: null,

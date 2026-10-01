@@ -265,3 +265,13 @@ test('applies inset and circle clip-paths without rasterising', () => {
   expect(half).not.toContain('clipped away');
   expect(shapeNamed(xml, 'Image: Avatar')).toContain('<a:prstGeom prst="ellipse">');
 });
+
+test('rounds the corners a rounded overflow-hidden parent clips off its children', () => {
+  const xml = slide(9);
+  const cover = shapeNamed(xml, 'Image: Card cover');
+  expect(cover).toContain('<a:custGeom>');
+  expect(cover.match(/<a:arcTo /g)).toHaveLength(2);
+  const footer = shapeNamed(xml, 'Rectangle #card-footer');
+  expect(footer).toContain('<a:custGeom>');
+  expect(footer.match(/<a:arcTo /g)).toHaveLength(2);
+});

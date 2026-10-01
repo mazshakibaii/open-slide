@@ -264,6 +264,28 @@ const Decor: Page = () => (
   </div>
 );
 
+const Boxes: Page = () => (
+  <div style={{ ...page, position: 'relative' }}>
+    <div
+      style={{
+        ...at(80, 80),
+        width: 360,
+        height: 300,
+        borderRadius: 32,
+        overflow: 'hidden',
+        background: '#1e293b',
+      }}
+    >
+      <img
+        src={photo}
+        alt="Card cover"
+        style={{ display: 'block', width: 360, height: 180, objectFit: 'cover' }}
+      />
+      <div id="card-footer" style={{ height: 120, background: '#0ea5e9' }} />
+    </div>
+  </div>
+);
+
 export default [
   First,
   Unpositioned,
@@ -273,4 +295,5 @@ export default [
   Text,
   Generated,
   Decor,
+  Boxes,
 ] satisfies Page[];
