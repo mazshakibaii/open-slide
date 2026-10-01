@@ -128,3 +128,22 @@ test('keeps source case and exports capitals as a run property', () => {
 test('carries image alt text as the picture description', () => {
   expect(slide(5)).toContain('name="Image: Gradient swatch" descr="Gradient swatch"');
 });
+
+function mediaOf(slideNumber: number, picture: string): Uint8Array {
+  const rId = /<a:blip r:embed="(rId\d+)"/.exec(picture)?.[1];
+  const rels = strFromU8(parts[`ppt/slides/_rels/slide${slideNumber}.xml.rels`]);
+  const target = new RegExp(`Id="${rId}"[^>]*Target="\\.\\./media/([^"]+)"`).exec(rels)?.[1];
+  const bytes = target ? parts[`ppt/media/${target}`] : undefined;
+  if (!bytes) throw new Error(`no media for ${rId}`);
+  return bytes;
+}
+
+function pngSize(bytes: Uint8Array): { width: number; height: number } {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return { width: view.getUint32(16), height: view.getUint32(20) };
+}
+
+test('downsamples an image stored far larger than it is drawn', () => {
+  const picture = shapeNamed(slide(5), 'Image: Oversized');
+  expect(pngSize(mediaOf(5, picture))).toEqual({ width: 320, height: 160 });
+});

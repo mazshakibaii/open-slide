@@ -90,6 +90,7 @@ export async function exportSlideAsPptx(
       });
     }
     onProgress?.({ phase: 'generating', current: total, total, percent: 98 });
+    await images.optimize();
     download(
       lib.buildPptxFiles({ slides, images: images.images }),
       lib.zipSync,

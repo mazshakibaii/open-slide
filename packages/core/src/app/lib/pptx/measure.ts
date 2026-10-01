@@ -949,6 +949,15 @@ function cropToClip(placement: Placement, clip: Rect | null, world: Mat): Placem
   };
 }
 
+function noteDisplay(ctx: Ctx, node: PictureNode): void {
+  const c = node.crop ?? { l: 0, t: 0, r: 0, b: 0 };
+  ctx.images.noteDisplay(
+    node.imageId,
+    node.box.w / Math.max(0.001, 1 - c.l - c.r),
+    node.box.h / Math.max(0.001, 1 - c.t - c.b),
+  );
+}
+
 function makePicture(
   name: string,
   placement: Placement,
@@ -1016,6 +1025,7 @@ function paintImage(ctx: Ctx, m: Measured & { el: HTMLImageElement }): void {
         ...makePicture(name, placement, m.world, loaded.id, alpha, geometry, null, null),
         description: el.alt || null,
       };
+      noteDisplay(ctx, slot.node);
     }),
   );
 }
@@ -1098,6 +1108,7 @@ function paintBackgroundImage(
         null,
         null,
       );
+      noteDisplay(ctx, slot.node);
     }),
   );
 }

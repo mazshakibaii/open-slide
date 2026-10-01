@@ -1,4 +1,5 @@
 import type { Page, SlideMeta } from '@open-slide/core';
+import big from './assets/big.png';
 import photo from './assets/photo.png';
 
 export const meta: SlideMeta = {
@@ -100,6 +101,7 @@ const Runs: Page = () => (
     <h2 style={{ ...at(80, 200), textTransform: 'uppercase' }}>Shouting label</h2>
     <p style={{ ...at(80, 300), fontVariant: 'small-caps' }}>Small caps label</p>
     <img src={photo} alt="Gradient swatch" style={{ ...at(80, 400), width: 80, height: 40 }} />
+    <img src={big} alt="Oversized" style={{ ...at(80, 500), width: 160, height: 80 }} />
   </div>
 );
 

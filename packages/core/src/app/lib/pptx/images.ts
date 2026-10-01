@@ -55,6 +55,10 @@ function loadImageElement(url: string): Promise<HTMLImageElement | null> {
 }
 
 const SVG_RASTER_SCALE = 2;
+// Pixels per drawn canvas pixel worth keeping: the 1920px canvas spans 13.3in,
+// so 2x is ~290 dpi across a full-width image.
+const MAX_DENSITY = 2;
+const MIN_SAVING = 0.75;
 
 function fnv1a(bytes: Uint8Array, seed = 0x811c9dc5): number {
   let h = seed;
@@ -76,6 +80,8 @@ export class ImageStore {
   readonly images: SceneImage[] = [];
   private readonly byKey = new Map<string, Promise<LoadedImage | null>>();
   private readonly byContent = new Map<string, SceneImage[]>();
+  private readonly natural = new Map<number, { width: number; height: number }>();
+  private readonly drawn = new Map<number, { w: number; h: number }>();
   private nextId = 1;
 
   /** Identical bytes (the same overlay rasterised on every page) are stored once. */
@@ -91,6 +97,29 @@ export class ImageStore {
     return image.id;
   }
 
+  /** Records the largest size, in canvas pixels, an image is drawn at (uncropped). */
+  noteDisplay(id: number, w: number, h: number): void {
+    const prev = this.drawn.get(id);
+    this.drawn.set(id, { w: Math.max(prev?.w ?? 0, w), h: Math.max(prev?.h ?? 0, h) });
+  }
+
+  /** Re-encodes photos stored far larger than they are ever drawn. */
+  async optimize(): Promise<void> {
+    for (const image of this.images) {
+      if ((image.format !== 'png' && image.format !== 'jpeg') || image.svg) continue;
+      const natural = this.natural.get(image.id);
+      const drawn = this.drawn.get(image.id);
+      if (!natural || !drawn) continue;
+      const scale = Math.min(
+        1,
+        Math.max((MAX_DENSITY * drawn.w) / natural.width, (MAX_DENSITY * drawn.h) / natural.height),
+      );
+      if (scale > MIN_SAVING) continue;
+      const resized = await resize(image, natural, scale);
+      if (resized && resized.length < image.bytes.length) image.bytes = resized;
+    }
+  }
+
   fromUrl(url: string): Promise<LoadedImage | null> {
     let pending = this.byKey.get(url);
     if (!pending) {
@@ -101,6 +130,12 @@ export class ImageStore {
   }
 
   private async load(url: string): Promise<LoadedImage | null> {
+    const loaded = await this.decode(url);
+    if (loaded) this.natural.set(loaded.id, { width: loaded.width, height: loaded.height });
+    return loaded;
+  }
+
+  private async decode(url: string): Promise<LoadedImage | null> {
     let bytes: Uint8Array | null = null;
     try {
       const res = await fetch(url);
@@ -136,5 +171,31 @@ export class ImageStore {
     const png = await encodePng(img, img.naturalWidth, img.naturalHeight);
     if (!png) return null;
     return { id: this.add(png, 'png'), width: img.naturalWidth, height: img.naturalHeight };
+  }
+}
+
+async function resize(
+  image: SceneImage,
+  natural: { width: number; height: number },
+  scale: number,
+): Promise<Uint8Array | null> {
+  const width = Math.max(1, Math.round(natural.width * scale));
+  const height = Math.max(1, Math.round(natural.height * scale));
+  try {
+    const bitmap = await createImageBitmap(new Blob([image.bytes as BlobPart]), {
+      resizeWidth: width,
+      resizeHeight: height,
+      resizeQuality: 'high',
+    });
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    canvas.getContext('2d')?.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    const type = image.format === 'jpeg' ? 'image/jpeg' : 'image/png';
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, 0.9));
+    return blob ? new Uint8Array(await blob.arrayBuffer()) : null;
+  } catch {
+    return null;
   }
 }
