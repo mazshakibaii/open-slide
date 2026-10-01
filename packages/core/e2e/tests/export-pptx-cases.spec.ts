@@ -147,3 +147,72 @@ test('downsamples an image stored far larger than it is drawn', () => {
   const picture = shapeNamed(slide(5), 'Image: Oversized');
   expect(pngSize(mediaOf(5, picture))).toEqual({ width: 320, height: 160 });
 });
+
+function textOf(shape: string): string {
+  return Array.from(shape.matchAll(/<a:t>([^<]*)<\/a:t>|<a:br>/g), (m) => m[1] ?? '\n').join('');
+}
+
+test('lets a wrapped paragraph re-wrap at its column instead of freezing its lines', () => {
+  const shape = shapeNamed(slide(6), 'Text: This paragraph wraps');
+  expect(shape).toContain('<a:bodyPr wrap="square"');
+  expect(shape).not.toContain('<a:br>');
+  expect(textOf(shape)).toBe(
+    'This paragraph wraps inside a five hundred and sixty pixel column, so it has to arrive as text that wraps rather than as frozen lines.',
+  );
+  const b = box(shape);
+  expect(b.x).toBe(80);
+  expect(b.w).toBeGreaterThanOrEqual(560);
+  expect(b.w).toBeLessThanOrEqual(567);
+});
+
+test('keeps only the line breaks the author wrote', () => {
+  const shape = shapeNamed(slide(6), 'Text: First line ends here');
+  expect(shape.match(/<a:br>/g)).toHaveLength(1);
+  expect(textOf(shape)).toBe('First line ends here\nsecond line after a break.');
+});
+
+test('exports right-to-left paragraphs as right-to-left text', () => {
+  const shape = shapeNamed(slide(6), 'Text: שלום');
+  expect(shape).toContain('algn="r" rtl="1"');
+  expect(shape).not.toContain('marL=');
+  expect(shape).not.toContain('<a:br>');
+  expect(textOf(shape)).toBe('שלום עולם, זוהי פסקה ארוכה בעברית שעוברת שורה בתוך התיבה');
+});
+
+test('truncates clipped text where the browser did, with its ellipsis', () => {
+  const ellipsis = textOf(shapeNamed(slide(6), 'Text: A very long single'));
+  expect(ellipsis.endsWith('…')).toBe(true);
+  expect(ellipsis).not.toContain('pixels');
+  const clamped = textOf(shapeNamed(slide(6), 'Text: Clamped to two lines'));
+  expect(clamped.endsWith('…')).toBe(true);
+  expect(clamped).not.toContain('eighteen');
+  expect(clamped).toContain('four five six');
+});
+
+test('carries text-indent', () => {
+  expect(shapeNamed(slide(6), 'Text: Text-indent pushes')).toContain(`indent="${48 * EMU_PER_PX}"`);
+});
+
+test('does not wrap nowrap text or a single line sized to itself', () => {
+  expect(shapeNamed(slide(6), 'Text: Never wrapping label')).toContain('<a:bodyPr wrap="none"');
+  expect(shapeNamed(slide(6), 'Text: Shrink to fit')).toContain('<a:bodyPr wrap="none"');
+});
+
+test('highlights a plain inline background on the run', () => {
+  const shape = shapeNamed(slide(6), 'Text: Inline highlighted phrase');
+  expect(shape).toMatch(
+    /<a:highlight><a:srgbClr val="FDE047">[\s\S]*?<a:t>highlighted phrase<\/a:t>/,
+  );
+});
+
+test('merges a plain list into one text box with a paragraph per item', () => {
+  const xml = slide(6);
+  const bullets = shapeNamed(xml, 'Text: Disc bullet one');
+  expect(bullets).toContain('Nested child');
+  expect(bullets.match(/<a:p>/g)).toHaveLength(4);
+  expect(bullets.match(/<a:buChar /g)).toHaveLength(4);
+  expect(bullets).toContain('lvl="1"');
+  expect(bullets).toMatch(/<a:spcBef><a:spcPts val="[1-9]\d*"\/><\/a:spcBef>/);
+  const numbers = shapeNamed(xml, 'Text: First numbered');
+  expect(numbers.match(/<a:buAutoNum type="arabicPeriod" startAt="1"\/>/g)).toHaveLength(3);
+});

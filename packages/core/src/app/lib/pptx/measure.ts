@@ -7,6 +7,7 @@ import {
   decompose,
   dominantShadow,
   geometryFor,
+  hasRadius,
   IDENTITY,
   isIdentity,
   isVisibleColor,
@@ -50,16 +51,16 @@ import type {
   Paragraph,
   PictureNode,
   Rect,
+  Run,
   RunStyle,
   SceneNode,
   ShadowEffect,
   ShapeNode,
   SlideScene,
-  TextLine,
   TextNode,
   TextShadow,
 } from './scene';
-import { type Atom, fillEmptyLines, groupAtomsIntoLines, lineToRuns } from './text-lines';
+import { type Atom, buildSegments, groupIntoLines } from './text-lines';
 
 const MEASURE_CLASS = 'os-pptx-measure';
 const MIN_SIZE = 0.25;
@@ -86,6 +87,7 @@ type Inherited = {
   decoration: Decoration;
   layer: Layer;
   link: string | null;
+  highlight: Rgba | null;
 };
 
 type Measured = {
@@ -152,6 +154,7 @@ export async function measurePage(options: MeasurePageOptions): Promise<SlideSce
       decoration: { underline: false, strike: false },
       layer,
       link: null,
+      highlight: null,
     });
     flushLayer(ctx, layer);
   } finally {
@@ -481,17 +484,28 @@ function paintBlock(ctx: Ctx, el: Element, inherited: Inherited): void {
     clip: m.clip,
     decoration: mergeDecoration(inherited.decoration, cs),
     link: linkOf(el) ?? inherited.link,
+    highlight: null,
     layer: stacking ? { index: ctx.slots.length, items: [] } : inherited.layer,
   };
 
-  const atoms: Atom[] = [];
+  const flow = newFlow();
   const blockChildren: Element[] = [];
   const inlineItems: Measured[] = [];
-  collectInline(ctx, el, childInherited, atoms, blockChildren, inlineItems);
+  collectInline(ctx, el, childInherited, flow, blockChildren, inlineItems);
 
   for (const item of inlineItems) paintBox(ctx, item);
-  paintText(ctx, m, atoms);
-  paintChildren(ctx, blockChildren, childInherited);
+  const list = hasText(flow) ? null : plainListItems(ctx, el, blockChildren, childInherited, 0);
+  if (list && list.length > 0) {
+    for (const item of list) for (const box of item.inlineItems) paintBox(ctx, box);
+    paintTextBlocks(
+      ctx,
+      m,
+      list.map((item) => item.block),
+    );
+  } else {
+    paintText(ctx, m, flow);
+    paintChildren(ctx, blockChildren, childInherited);
+  }
   if (stacking) flushLayer(ctx, childInherited.layer);
 }
 
@@ -562,6 +576,48 @@ function paintChildren(ctx: Ctx, children: Element[], inherited: Inherited): voi
   for (const e of [...flow, ...positive]) paintBlock(ctx, e.el, inherited);
 }
 
+type TextFlow = {
+  atoms: Atom[];
+  /** `<br>`s and preserved newlines waiting for the next text. */
+  breaks: number;
+  /** A block-level box interrupted the inline content. */
+  blockBreak: boolean;
+  /** Clipping hid part of the text. */
+  truncated: boolean;
+};
+
+function newFlow(): TextFlow {
+  return { atoms: [], breaks: 0, blockBreak: false, truncated: false };
+}
+
+function pushAtom(flow: TextFlow, atom: Omit<Atom, 'breaksBefore'>): void {
+  const pending = flow.breaks + (flow.blockBreak && flow.atoms.length > 0 ? 1 : 0);
+  // Collapsible whitespace at the start of a line is not rendered.
+  if (atom.rects.length === 0 && pending > 0) return;
+  flow.atoms.push({ ...atom, breaksBefore: pending });
+  flow.breaks = 0;
+  flow.blockBreak = false;
+}
+
+function blockBoundary(flow: TextFlow): void {
+  // A `<br>` that ends the text before a block only closes that line.
+  if (flow.breaks > 0 && flow.atoms.length > 0) flow.breaks -= 1;
+  flow.blockBreak = true;
+}
+
+function hasText(flow: TextFlow): boolean {
+  return flow.atoms.some((a) => /\S/.test(a.text));
+}
+
+function isInFlowBlock(cs: CSSStyleDeclaration): boolean {
+  return (
+    cs.position !== 'absolute' &&
+    cs.position !== 'fixed' &&
+    cs.float === 'none' &&
+    !cs.display.startsWith('inline')
+  );
+}
+
 /**
  * Walks the inline formatting context of a block: text nodes become atoms, inline
  * elements contribute their own painted fragments, and any block-level descendant is
@@ -571,24 +627,28 @@ function collectInline(
   ctx: Ctx,
   el: Element,
   inherited: Inherited,
-  atoms: Atom[],
+  flow: TextFlow,
   blockChildren: Element[],
   inlineItems: Measured[],
 ): void {
   const parentCs = getComputedStyle(el);
   for (const node of Array.from(el.childNodes)) {
     if (node.nodeType === Node.TEXT_NODE) {
-      collectTextAtoms(ctx, node as Text, parentCs, inherited, atoms);
+      collectTextAtoms(ctx, node as Text, parentCs, inherited, flow);
       continue;
     }
     if (node.nodeType !== Node.ELEMENT_NODE) continue;
     const child = node as Element;
     const tag = child.tagName.toUpperCase();
-    if (SKIPPED_TAGS.has(tag) || tag === 'BR') continue;
+    if (SKIPPED_TAGS.has(tag)) continue;
     const cs = getComputedStyle(child);
+    if (tag === 'BR') {
+      if (cs.display !== 'none') flow.breaks += 1;
+      continue;
+    }
     if (isHidden(cs)) continue;
     if (cs.display === 'contents') {
-      collectInline(ctx, child, inherited, atoms, blockChildren, inlineItems);
+      collectInline(ctx, child, inherited, flow, blockChildren, inlineItems);
       continue;
     }
     const inline =
@@ -602,21 +662,41 @@ function collectInline(
       cs.position !== 'static'
     ) {
       blockChildren.push(child);
+      if (isInFlowBlock(cs)) blockBoundary(flow);
       continue;
     }
     const m = measureElement(ctx, child, cs, inherited);
     if (!m) continue;
-    if (paintsAnything(cs, ctx.color)) inlineItems.push(m);
-    const decoration = mergeDecoration(inherited.decoration, cs);
+    const highlight = highlightOf(ctx, cs);
+    if (!highlight && paintsAnything(cs, ctx.color)) inlineItems.push(m);
     collectInline(
       ctx,
       child,
-      { ...inherited, opacity: m.opacity, decoration, link: linkOf(child) ?? inherited.link },
-      atoms,
+      {
+        ...inherited,
+        opacity: m.opacity,
+        decoration: mergeDecoration(inherited.decoration, cs),
+        link: linkOf(child) ?? inherited.link,
+        highlight: highlight ?? inherited.highlight,
+      },
+      flow,
       blockChildren,
       inlineItems,
     );
   }
+}
+
+/** A plain inline background (`<mark>`) travels as a run highlight that follows edits. */
+function highlightOf(ctx: Ctx, cs: CSSStyleDeclaration): Rgba | null {
+  if (cs.display !== 'inline') return null;
+  const bg = ctx.color(cs.backgroundColor);
+  if (!isVisibleColor(bg) || bg.a < 0.99) return null;
+  if (cs.backgroundImage !== 'none' || parseShadows(cs.boxShadow, ctx.color).length > 0)
+    return null;
+  if (borderSides(cs, ctx.color).some((s) => s.visible)) return null;
+  if (hasRadius(radiiOf(cs, 100, 100))) return null;
+  const padding = parsePx(cs.paddingLeft) + parsePx(cs.paddingRight);
+  return padding <= 0.25 * parsePx(cs.fontSize) ? bg : null;
 }
 
 function isPlainInline(ctx: Ctx, el: Element, cs: CSSStyleDeclaration): boolean {
@@ -1118,52 +1198,88 @@ function collectTextAtoms(
   node: Text,
   cs: CSSStyleDeclaration,
   inherited: Inherited,
-  atoms: Atom[],
+  flow: TextFlow,
 ): void {
   const text = node.data;
-  if (!text || (!/\S/.test(text) && !text.includes(' '))) return;
-  const range = document.createRange();
-  range.selectNodeContents(node);
-  const rects = Array.from(range.getClientRects()).filter((r) => r.width > 0.01);
-  if (rects.length === 0) return;
+  if (!text) return;
   const whiteSpace = cs.whiteSpace;
-  const preserve = whiteSpace.startsWith('pre') && whiteSpace !== 'pre-line';
+  const keepBreaks = /^(pre|pre-wrap|pre-line|break-spaces)$/.test(whiteSpace);
+  const preserve = /^(pre|pre-wrap|break-spaces)$/.test(whiteSpace);
   const style = runStyle(ctx, cs, inherited);
-  const styleKey = JSON.stringify(style);
+  const base = { styleKey: JSON.stringify(style), style, preserveSpaces: preserve };
   // Uppercase travels as a run property so the source text stays editable.
   const transform = cs.textTransform.includes('uppercase') ? 'none' : cs.textTransform;
-  const transformed =
-    cs.fontVariantCaps === 'all-small-caps'
-      ? applyTextTransform(text, transform).toLowerCase()
-      : applyTextTransform(text, transform);
-
-  if (rects.length === 1 && !(preserve && text.includes('\n'))) {
-    atoms.push({
-      text: transformed,
-      rect: rel(ctx, rects[0]),
-      styleKey,
-      style,
-      preserveSpaces: preserve,
-    });
-    return;
-  }
-
-  const aligned = transformed.length === text.length;
-  const segments = ctx.segmenter
-    ? Array.from(ctx.segmenter.segment(text), (s) => ({ index: s.index, segment: s.segment }))
-    : Array.from(text, (ch, i) => ({ index: i, segment: ch }));
-  for (const { index, segment } of segments) {
-    range.setStart(node, index);
-    range.setEnd(node, index + segment.length);
-    const r = range.getBoundingClientRect();
-    if (r.width < 0.01) {
-      if (/^\s+$/.test(segment) || r.height < 0.01) continue;
+  const source = (s: string) => {
+    const t = applyTextTransform(s, transform);
+    return cs.fontVariantCaps === 'all-small-caps' ? t.toLowerCase() : t;
+  };
+  const range = document.createRange();
+  const pieces = keepBreaks ? text.split('\n') : [text];
+  let from = 0;
+  pieces.forEach((piece, i) => {
+    if (i > 0) flow.breaks += 1;
+    const start = from;
+    from += piece.length + 1;
+    if (piece.length === 0) return;
+    range.setStart(node, start);
+    range.setEnd(node, start + piece.length);
+    const rects = Array.from(range.getClientRects())
+      .filter((r) => r.width > 0.01)
+      .map((r) => rel(ctx, r));
+    if (rects.length === 0) {
+      if (!/\S/.test(piece) && !preserve) pushAtom(flow, { ...base, text: ' ', rects: [] });
+      return;
     }
-    const piece = aligned
-      ? transformed.slice(index, index + segment.length)
-      : applyTextTransform(segment, transform);
-    atoms.push({ text: piece, rect: rel(ctx, r), styleKey, style, preserveSpaces: preserve });
+    const clip = inherited.clip;
+    if (clip && rects.some((r) => !contains(clip, r))) {
+      const kept = clipText(ctx, node, start, piece, clip, range);
+      if (kept.text.length < piece.length) flow.truncated = true;
+      if (kept.rects.length > 0)
+        pushAtom(flow, { ...base, text: source(kept.text), rects: kept.rects });
+      return;
+    }
+    pushAtom(flow, { ...base, text: source(piece), rects });
+  });
+}
+
+function contains(outer: Rect, r: Rect): boolean {
+  return (
+    r.x >= outer.x - 0.5 &&
+    r.y >= outer.y - 0.5 &&
+    r.x + r.w <= outer.x + outer.w + 0.5 &&
+    r.y + r.h <= outer.y + outer.h + 0.5
+  );
+}
+
+/** Keeps the graphemes whose centre is inside the clip; PowerPoint does not clip text. */
+function clipText(
+  ctx: Ctx,
+  node: Text,
+  start: number,
+  piece: string,
+  clip: Rect,
+  range: Range,
+): { text: string; rects: Rect[] } {
+  const segments = ctx.segmenter
+    ? Array.from(ctx.segmenter.segment(piece), (s) => ({ index: s.index, segment: s.segment }))
+    : Array.from(piece, (ch, i) => ({ index: i, segment: ch }));
+  let text = '';
+  const rects: Rect[] = [];
+  for (const { index, segment } of segments) {
+    range.setStart(node, start + index);
+    range.setEnd(node, start + index + segment.length);
+    const r = rel(ctx, range.getBoundingClientRect());
+    if (r.w < 0.01) {
+      if (/^\s+$/.test(segment)) text += segment;
+      continue;
+    }
+    const cx = r.x + r.w / 2;
+    const cy = r.y + r.h / 2;
+    if (cx < clip.x || cx > clip.x + clip.w || cy < clip.y || cy > clip.y + clip.h) continue;
+    text += segment;
+    rects.push(r);
   }
+  return { text, rects };
 }
 
 function runStyle(ctx: Ctx, cs: CSSStyleDeclaration, inherited: Inherited): RunStyle {
@@ -1201,6 +1317,7 @@ function runStyle(ctx: Ctx, cs: CSSStyleDeclaration, inherited: Inherited): RunS
     caps: capsOf(cs),
     kerning: cs.fontKerning !== 'none',
     link: inherited.link,
+    highlight: inherited.highlight,
   };
 }
 
@@ -1225,16 +1342,23 @@ function altTextOf(el: Element): string | null {
 }
 
 function alignOf(cs: CSSStyleDeclaration): Paragraph['align'] {
+  const rtl = cs.direction === 'rtl';
   switch (cs.textAlign) {
     case 'center':
+    case '-webkit-center':
       return 'ctr';
     case 'right':
-    case 'end':
+    case '-webkit-right':
       return 'r';
+    case 'left':
+    case '-webkit-left':
+      return 'l';
+    case 'end':
+      return rtl ? 'l' : 'r';
     case 'justify':
       return 'just';
     default:
-      return 'l';
+      return rtl ? 'r' : 'l';
   }
 }
 
@@ -1294,55 +1418,189 @@ function measureText(ctx: Ctx, cs: CSSStyleDeclaration, text: string): number {
   }
 }
 
-function paintText(ctx: Ctx, m: Measured, atoms: Atom[]): void {
-  if (atoms.length === 0) return;
-  const lines = fillEmptyLines(groupAtomsIntoLines(atoms));
-  while (lines.length > 0 && lines[lines.length - 1].atoms.length === 0) lines.pop();
-  if (lines.length === 0) return;
-  const textLines: TextLine[] = lines.map(lineToRuns);
-  if (textLines.every((l) => l.runs.length === 0)) return;
+function contentBox(m: Measured): Rect {
+  const { cs, rect } = m;
+  const l = parsePx(cs.borderLeftWidth) + parsePx(cs.paddingLeft);
+  const r = parsePx(cs.borderRightWidth) + parsePx(cs.paddingRight);
+  const t = parsePx(cs.borderTopWidth) + parsePx(cs.paddingTop);
+  const b = parsePx(cs.borderBottomWidth) + parsePx(cs.paddingBottom);
+  return {
+    x: rect.x + l,
+    y: rect.y + t,
+    w: Math.max(0, rect.w - l - r),
+    h: Math.max(0, rect.h - t - b),
+  };
+}
 
-  const cs = m.cs;
+function clamps(cs: CSSStyleDeclaration): boolean {
+  const clamp = (cs as unknown as Record<string, string>).webkitLineClamp;
+  return !!clamp && clamp !== 'none';
+}
+
+/**
+ * The browser draws `…` after the last characters that fit, giving up as many
+ * of them as the ellipsis needs; the source text has no such glyph.
+ */
+function appendEllipsis(ctx: Ctx, cs: CSSStyleDeclaration, segments: Run[][], spare: number): void {
+  const runs = [...segments].reverse().find((s) => s.length > 0);
+  const last = runs?.at(-1);
+  if (!last) return;
+  const needed = measureText(ctx, cs, '…') - spare;
+  let cut = 0;
+  while (
+    needed > 0 &&
+    cut < last.text.length &&
+    measureText(ctx, cs, last.text.slice(last.text.length - cut)) < needed
+  )
+    cut++;
+  last.text = `${last.text.slice(0, last.text.length - cut).trimEnd()}…`;
+}
+
+type TextBlock = {
+  paragraphs: Paragraph[];
+  /** Top of the first line box and bottom of the last. */
+  top: number;
+  bottom: number;
+  /** Start of the text column: the content box, less a hanging marker. */
+  left: number;
+  right: number;
+  /** Extent of the drawn lines, marker included. */
+  usedLeft: number;
+  usedRight: number;
+  /** Some run of text between hard breaks took more than one line. */
+  wraps: boolean;
+  /** Every line spans the content box: the box is sized to its text. */
+  fills: boolean;
+  textIndent: number;
+  preview: string;
+};
+
+function textBlock(
+  ctx: Ctx,
+  m: Measured,
+  flow: TextFlow,
+  marker: { bullet: Bullet; width: number } | null,
+  level: number,
+): TextBlock | null {
+  if (!hasText(flow)) return null;
+  const { lines } = groupIntoLines(flow.atoms);
+  if (lines.length === 0) return null;
+  const { cs } = m;
+  const segments = buildSegments(flow.atoms);
+  if (flow.truncated && (cs.textOverflow === 'ellipsis' || clamps(cs))) {
+    const lastRect = flow.atoms.flatMap((a) => a.rects).at(-1);
+    const clipRight = m.clip ? m.clip.x + m.clip.w : Number.POSITIVE_INFINITY;
+    appendEllipsis(ctx, cs, segments, lastRect ? clipRight - (lastRect.x + lastRect.w) : 0);
+  }
+
+  // A jump across k hard-break segments spans k - 1 blank lines.
+  const pitches = lines.map((line, i) =>
+    i === 0
+      ? 0
+      : (line.bottom - lines[i - 1].bottom) / Math.max(1, line.segment - lines[i - 1].segment),
+  );
   const cssLineHeight = cs.lineHeight === 'normal' ? null : parsePx(cs.lineHeight);
-  const firstPitch =
-    lines.length >= 2
-      ? lines[1].bottom - lines[0].bottom
-      : (cssLineHeight ?? lines[0].bottom - lines[0].top);
-  const boxTop = lines[0].bottom - firstPitch;
+  pitches[0] = lines.length >= 2 ? pitches[1] : (cssLineHeight ?? lines[0].bottom - lines[0].top);
 
-  const paragraphs: Paragraph[] = [];
   const align = alignOf(cs);
-  const firstStyle = textLines.find((l) => l.runs.length > 0)?.runs[0].style ?? atoms[0].style;
-  const marker = bulletFor(ctx, m, firstStyle);
+  const rtl = cs.direction === 'rtl';
+  const markerWidth = marker?.width ?? 0;
+  const textIndent = parsePx(cs.textIndent);
+  const paragraphs: Paragraph[] = [];
   let current: Paragraph | null = null;
-  let currentPitch = Number.NaN;
-  let height = 0;
-  for (let i = 0; i < lines.length; i++) {
-    const pitch = i === 0 ? firstPitch : lines[i].bottom - lines[i - 1].bottom;
-    if (!current || Math.abs(pitch - currentPitch) > PITCH_TOLERANCE) {
+  let pitch = pitches[0];
+  let size = lines[0].sizePx;
+  segments.forEach((runs, s) => {
+    const own = lines.map((line, i) => ({ line, i })).filter(({ line }) => line.segment === s);
+    if (own.length > 0) {
+      pitch = pitches[own[own.length - 1].i];
+      size = Math.max(...own.map(({ line }) => line.sizePx));
+    }
+    if (!current || Math.abs(pitch - current.lineSpacingPx) > PITCH_TOLERANCE) {
+      const first = paragraphs.length === 0;
       current = {
         lineSpacingPx: Math.max(1, pitch),
         lines: [],
         align,
-        bullet: paragraphs.length === 0 && marker ? marker.bullet : null,
-        marginLeftPx: marker ? marker.width : 0,
-        indentPx: paragraphs.length === 0 && marker ? -marker.width : 0,
-        endSizePx: lines[i].sizePx,
+        rtl,
+        level,
+        bullet: first && marker ? marker.bullet : null,
+        marginLeftPx: markerWidth,
+        indentPx: first ? textIndent - markerWidth : 0,
+        endSizePx: size,
       };
-      currentPitch = pitch;
       paragraphs.push(current);
     }
-    current.lines.push(textLines[i]);
-    height += Math.max(1, pitch);
+    current.lines.push({ runs, sizePx: size });
+    current.endSizePx = size;
+  });
+
+  const content = contentBox(m);
+  const top = lines[0].bottom - pitches[0] * (1 + lines[0].segment);
+  const perSegment = new Map<number, number>();
+  for (const line of lines) perSegment.set(line.segment, (perSegment.get(line.segment) ?? 0) + 1);
+  return {
+    paragraphs,
+    top,
+    bottom: lines[lines.length - 1].bottom,
+    left: content.x - markerWidth,
+    right: Math.max(content.x + content.w, ...lines.map((l) => l.right)),
+    usedLeft: Math.min(...lines.map((l) => l.left)) - markerWidth,
+    usedRight: Math.max(...lines.map((l) => l.right)),
+    wraps: [...perSegment.values()].some((n) => n > 1),
+    fills: lines.every((l) => l.right - l.left >= content.w - 1),
+    textIndent,
+    preview: segments
+      .map((runs) => runs.map((r) => r.text).join(''))
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 40),
+  };
+}
+
+const SLACK_SIDES: Record<Paragraph['align'], [number, number]> = {
+  l: [0, 1],
+  just: [0, 1],
+  r: [1, 0],
+  ctr: [0.5, 0.5],
+};
+
+/**
+ * One text box for one or more blocks (the items of a list). It wraps at the
+ * content width unless the text is a single line sized to itself or `nowrap`,
+ * with a hair of slack so a reader that measures a touch wider does not push
+ * the last word of a line onto the next.
+ */
+function paintTextBlocks(ctx: Ctx, m: Measured, blocks: TextBlock[]): void {
+  if (blocks.length === 0) return;
+  const nowrap = /^(nowrap|pre)$/.test(m.cs.whiteSpace);
+  const wrap = !nowrap && (blocks.length > 1 || blocks[0].wraps || !blocks[0].fills);
+  const left = Math.min(...blocks.map((b) => (wrap ? b.left : b.usedLeft)));
+  let right = Math.max(...blocks.map((b) => (wrap ? b.right : b.usedRight)));
+  let x = left;
+  if (wrap) {
+    const fontSize = parsePx(m.cs.fontSize) || 16;
+    const slack = Math.min(Math.max(1, 0.01 * (right - left)), 0.25 * fontSize);
+    const [before, after] = SLACK_SIDES[blocks[0].paragraphs[0]?.align ?? 'l'];
+    x -= slack * before;
+    right += slack * after;
   }
 
-  const left = Math.min(...lines.map((l) => l.left)) - (marker ? marker.width : 0);
-  const right = Math.max(...lines.map((l) => l.right));
+  const paragraphs = blocks.flatMap((block, i) =>
+    block.paragraphs.map((p, j) => ({
+      ...p,
+      marginLeftPx: p.marginLeftPx + (wrap ? block.left : block.usedLeft) - left,
+      indentPx: !wrap && j === 0 ? p.indentPx - block.textIndent : p.indentPx,
+      spaceBeforePx: i > 0 && j === 0 ? Math.max(0, block.top - blocks[i - 1].bottom) : 0,
+    })),
+  );
+  const top = blocks[0].top;
   const layoutBox: Rect = {
-    x: left,
-    y: boxTop,
-    w: Math.max(1, right - left),
-    h: Math.max(1, height),
+    x,
+    y: top,
+    w: Math.max(1, right - x),
+    h: Math.max(1, blocks[blocks.length - 1].bottom - top),
   };
   const p = placed(layoutBox, m.world);
   if (p.scale !== 1) {
@@ -1351,20 +1609,22 @@ function paintText(ctx: Ctx, m: Measured, atoms: Atom[]): void {
       para.marginLeftPx *= p.scale;
       para.indentPx *= p.scale;
       para.endSizePx *= p.scale;
+      para.spaceBeforePx *= p.scale;
       for (const line of para.lines) {
         line.sizePx *= p.scale;
-        for (const run of line.runs) {
-          run.style = {
+        line.runs = line.runs.map((run) => ({
+          ...run,
+          style: {
             ...run.style,
             sizePx: run.style.sizePx * p.scale,
             letterSpacingPx: run.style.letterSpacingPx * p.scale,
-          };
-        }
+          },
+        }));
       }
     }
   }
-  const preview = textLines
-    .flatMap((l) => l.runs.map((r) => r.text))
+  const preview = blocks
+    .map((b) => b.preview)
     .join(' ')
     .trim()
     .slice(0, 40);
@@ -1374,7 +1634,76 @@ function paintText(ctx: Ctx, m: Measured, atoms: Atom[]): void {
     box: p.box,
     rotationDeg: p.rotationDeg,
     flipV: p.flipV,
+    wrap,
     paragraphs,
   };
   pushSlot(ctx, node);
+}
+
+function paintText(ctx: Ctx, m: Measured, flow: TextFlow): void {
+  const first = flow.atoms.find((a) => /\S/.test(a.text));
+  if (!first) return;
+  const block = textBlock(ctx, m, flow, bulletFor(ctx, m, first.style), 0);
+  if (block) paintTextBlocks(ctx, m, [block]);
+}
+
+type ListItem = { block: TextBlock; inlineItems: Measured[] };
+
+/**
+ * A list whose items are plain text (and nested plain lists) becomes one text
+ * box, one paragraph per item, so PowerPoint can renumber, indent and add items.
+ * Anything richer keeps the per-item boxes.
+ */
+function plainListItems(
+  ctx: Ctx,
+  list: Element,
+  children: Element[],
+  inherited: Inherited,
+  level: number,
+): ListItem[] | null {
+  const tag = list.tagName.toUpperCase();
+  if (tag !== 'UL' && tag !== 'OL') return null;
+  if (list.hasAttribute('reversed')) return null;
+  const start = list instanceof HTMLOListElement ? list.start : 1;
+  const out: ListItem[] = [];
+  for (const li of children) {
+    const cs = getComputedStyle(li);
+    if (cs.display !== 'list-item' || cs.position !== 'static' || cs.float !== 'none') return null;
+    if (li.hasAttribute('value') || ctx.projected.has(li)) return null;
+    if (!isIdentity(ctx.transforms.get(li) ?? IDENTITY)) return null;
+    const m = measureElement(ctx, li, cs, inherited);
+    if (!m || needsSubtreeRaster(ctx, m) || paintsAnything(cs, ctx.color)) return null;
+    const flow = newFlow();
+    const nested: Element[] = [];
+    const inlineItems: Measured[] = [];
+    const itemInherited: Inherited = {
+      ...inherited,
+      opacity: m.opacity,
+      clip: m.clip,
+      decoration: mergeDecoration(inherited.decoration, cs),
+      link: linkOf(li) ?? inherited.link,
+      highlight: null,
+    };
+    collectInline(ctx, li, itemInherited, flow, nested, inlineItems);
+    const first = flow.atoms.find((a) => /\S/.test(a.text));
+    if (!first) return null;
+    const marker = bulletFor(ctx, m, first.style);
+    if (marker?.bullet.kind === 'number') marker.bullet = { ...marker.bullet, startAt: start };
+    const block = textBlock(ctx, m, flow, marker, level);
+    if (!block) return null;
+    out.push({ block, inlineItems });
+    for (const child of nested) {
+      const ccs = getComputedStyle(child);
+      if (isHidden(ccs)) continue;
+      if (ccs.position !== 'static' || paintsAnything(ccs, ctx.color)) return null;
+      const sub = newFlow();
+      const items: Element[] = [];
+      collectInline(ctx, child, itemInherited, sub, items, []);
+      if (hasText(sub)) return null;
+      const nestedItems = plainListItems(ctx, child, items, itemInherited, level + 1);
+      if (!nestedItems) return null;
+      out.push(...nestedItems);
+    }
+  }
+  return out;
 }

@@ -25,7 +25,7 @@ test.describe('pptx export', () => {
     expect(slide1).toContain('<a:t>Alpha page one</a:t>');
     expect(slide1).toContain('<a:t>Opening content</a:t>');
     expect(slide1).toContain('<p:bg><p:bgPr><a:solidFill><a:srgbClr val="101014">');
-    expect(slide1).toContain('<a:bodyPr wrap="none"');
+    expect(slide1).toContain('<a:bodyPr wrap="square"');
     expect(slide1).toContain('<a:lnSpc><a:spcPts');
     expect(slide1).not.toContain('<p:pic>');
 

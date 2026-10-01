@@ -83,6 +83,8 @@ export type RunStyle = {
   kerning: boolean;
   /** Absolute URL of the enclosing link. */
   link: string | null;
+  /** A plain inline background drawn behind the text (`<mark>`). */
+  highlight: Rgba | null;
 };
 
 export type Run = { text: string; style: RunStyle };
@@ -95,17 +97,24 @@ export type Bullet =
 
 export type Paragraph = {
   lineSpacingPx: number;
+  /** Text between hard line breaks; the reader wraps each one itself. */
   lines: TextLine[];
   align: 'l' | 'ctr' | 'r' | 'just';
   bullet: Bullet | null;
   marginLeftPx: number;
   indentPx: number;
   endSizePx: number;
+  rtl?: boolean;
+  /** Outline level, for nested list items. */
+  level?: number;
+  spaceBeforePx?: number;
 };
 
 export type TextNode = NodeBase & {
   kind: 'text';
   paragraphs: Paragraph[];
+  /** Wrap at the box width; off for single lines sized to their text and for `nowrap`. */
+  wrap: boolean;
   /** Uniform scale carried by the world transform; font metrics are pre-multiplied. */
 };
 

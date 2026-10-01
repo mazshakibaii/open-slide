@@ -345,13 +345,16 @@ function cropXml(crop: PictureNode['crop']): string {
 function textXml(node: TextNode, ctx: EmitContext): string {
   const id = ctx.nextId++;
   const paragraphs = node.paragraphs.map((p) => paragraphXml(p, ctx)).join('');
-  return `<p:sp><p:nvSpPr>${nvPr(id, node.name)}<p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr>${xfrmXml(node)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr><p:txBody><a:bodyPr wrap="none" lIns="0" tIns="0" rIns="0" bIns="0" rtlCol="0" anchor="t"><a:noAutofit/></a:bodyPr><a:lstStyle/>${paragraphs}</p:txBody></p:sp>`;
+  return `<p:sp><p:nvSpPr>${nvPr(id, node.name)}<p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr>${xfrmXml(node)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr><p:txBody><a:bodyPr wrap="${node.wrap ? 'square' : 'none'}" lIns="0" tIns="0" rIns="0" bIns="0" rtlCol="0" anchor="t"><a:spAutoFit/></a:bodyPr><a:lstStyle/>${paragraphs}</p:txBody></p:sp>`;
 }
 
 function paragraphXml(p: Paragraph, ctx: EmitContext): string {
   const marL = p.marginLeftPx > 0 ? ` marL="${px(p.marginLeftPx)}"` : '';
   const indent = p.indentPx !== 0 ? ` indent="${px(p.indentPx)}"` : '';
-  const pPr = `<a:pPr${marL}${indent} algn="${p.align}"><a:lnSpc><a:spcPts val="${pxToHundredthsPt(p.lineSpacingPx)}"/></a:lnSpc><a:spcBef><a:spcPts val="0"/></a:spcBef><a:spcAft><a:spcPts val="0"/></a:spcAft>${bulletXml(p.bullet)}</a:pPr>`;
+  const lvl = p.level ? ` lvl="${Math.min(8, p.level)}"` : '';
+  const rtl = p.rtl ? ' rtl="1"' : '';
+  const before = pxToHundredthsPt(Math.max(0, p.spaceBeforePx ?? 0));
+  const pPr = `<a:pPr${marL}${indent}${lvl} algn="${p.align}"${rtl}><a:lnSpc><a:spcPts val="${pxToHundredthsPt(p.lineSpacingPx)}"/></a:lnSpc><a:spcBef><a:spcPts val="${before}"/></a:spcBef><a:spcAft><a:spcPts val="0"/></a:spcAft>${bulletXml(p.bullet)}</a:pPr>`;
   const body = p.lines
     .map((line, i) => {
       const runs = line.runs.map((run) => runXml(run, ctx)).join('');
@@ -409,7 +412,10 @@ function runXml(run: Run, ctx: EmitContext): string {
   const link = s.link
     ? `<a:hlinkClick r:id="${ctx.rels.hyperlink(s.link)}"><a:extLst><a:ext uri="${HLINK_COLOR_URI}"><ahyp:hlinkClr xmlns:ahyp="${NS_HLINK_COLOR}" val="tx"/></a:ext></a:extLst></a:hlinkClick>`
     : '';
-  return `<a:r><a:rPr ${attrs}>${outline}<a:solidFill>${colorXml(s.color)}</a:solidFill>${shadow}<a:latin typeface="${font}"/><a:ea typeface="${font}"/><a:cs typeface="${font}"/>${link}</a:rPr><a:t>${escapeXml(run.text)}</a:t></a:r>`;
+  const highlight = s.highlight
+    ? `<a:highlight>${colorXml({ ...s.highlight, a: 1 })}</a:highlight>`
+    : '';
+  return `<a:r><a:rPr ${attrs}>${outline}<a:solidFill>${colorXml(s.color)}</a:solidFill>${shadow}${highlight}<a:latin typeface="${font}"/><a:ea typeface="${font}"/><a:cs typeface="${font}"/>${link}</a:rPr><a:t>${escapeXml(run.text)}</a:t></a:r>`;
 }
 
 function xfrmXml(node: { box: Rect; rotationDeg: number; flipV: boolean }): string {

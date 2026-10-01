@@ -27,6 +27,7 @@ const style: RunStyle = {
   caps: null,
   kerning: false,
   link: null,
+  highlight: null,
 };
 
 const deck: DeckScene = {
@@ -67,6 +68,7 @@ const deck: DeckScene = {
           box: { x: 120, y: 120, w: 300, h: 128 },
           rotationDeg: -3,
           flipV: false,
+          wrap: true,
           paragraphs: [
             {
               lineSpacingPx: 64,
@@ -247,10 +249,14 @@ describe('runs and pictures', () => {
             box: { x: 0, y: 0, w: 400, h: 60 },
             rotationDeg: 0,
             flipV: false,
+            wrap: false,
             paragraphs: [
               {
                 lineSpacingPx: 60,
-                align: 'l',
+                align: 'r',
+                rtl: true,
+                level: 1,
+                spaceBeforePx: 24,
                 bullet: null,
                 marginLeftPx: 0,
                 indentPx: 0,
@@ -259,7 +265,15 @@ describe('runs and pictures', () => {
                   {
                     sizePx: 40,
                     runs: [
-                      { text: 'Read the ', style: { ...style, kerning: true, caps: 'all' } },
+                      {
+                        text: 'Read the ',
+                        style: {
+                          ...style,
+                          kerning: true,
+                          caps: 'all',
+                          highlight: { r: 253, g: 224, b: 71, a: 1 },
+                        },
+                      },
                       {
                         text: 'docs & guide',
                         style: { ...style, link: 'https://example.com/a?b=1&c=2' },
@@ -303,6 +317,22 @@ describe('runs and pictures', () => {
     expect(rels).toContain(
       `<Relationship Id="${link?.[1]}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com/a?b=1&amp;c=2" TargetMode="External"/>`,
     );
+  });
+
+  it('wraps text boxes that should wrap and grows every box with its text', () => {
+    const main = strFromU8(buildPptxFiles(deck)['ppt/slides/slide1.xml']);
+    expect(main).toContain('<a:bodyPr wrap="square"');
+    expect(main).toContain('<a:spAutoFit/>');
+    expect(slide).toContain('<a:bodyPr wrap="none"');
+  });
+
+  it('writes direction, outline level and space before on the paragraph', () => {
+    expect(slide).toContain('<a:pPr lvl="1" algn="r" rtl="1">');
+    expect(slide).toContain('<a:spcBef><a:spcPts val="1200"/></a:spcBef>');
+  });
+
+  it('highlights a run', () => {
+    expect(slide).toContain('<a:highlight><a:srgbClr val="FDE047"></a:srgbClr></a:highlight>');
   });
 
   it('carries alt text as the picture description', () => {

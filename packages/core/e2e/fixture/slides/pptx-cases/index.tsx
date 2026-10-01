@@ -105,4 +105,68 @@ const Runs: Page = () => (
   </div>
 );
 
-export default [First, Unpositioned, Effects, Stacking, Runs] satisfies Page[];
+const Text: Page = () => (
+  <div style={{ ...page, position: 'relative' }}>
+    <p style={{ ...at(80, 60), width: 560, lineHeight: 1.4 }}>
+      This paragraph wraps inside a five hundred and sixty pixel column, so it has to arrive as text
+      that wraps rather than as frozen lines.
+    </p>
+    <p style={{ ...at(700, 60), width: 520 }}>
+      First line ends here
+      <br />
+      second line after a break.
+    </p>
+    <p dir="rtl" style={{ ...at(1280, 60), width: 420 }}>
+      שלום עולם, זוהי פסקה ארוכה בעברית שעוברת שורה בתוך התיבה
+    </p>
+    <p
+      style={{
+        ...at(80, 400),
+        width: 300,
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+      }}
+    >
+      A very long single line truncated with an ellipsis at three hundred pixels
+    </p>
+    <p
+      style={{
+        ...at(700, 400),
+        width: 400,
+        display: '-webkit-box',
+        WebkitLineClamp: 2,
+        WebkitBoxOrient: 'vertical',
+        overflow: 'hidden',
+      }}
+    >
+      Clamped to two lines: one two three four five six seven eight nine ten eleven twelve thirteen
+      fourteen fifteen sixteen seventeen eighteen.
+    </p>
+    <p style={{ ...at(1280, 400), width: 520, textIndent: 48 }}>
+      Text-indent pushes this first line in while the rest of the paragraph wraps flush left.
+    </p>
+    <span style={{ ...at(80, 600), whiteSpace: 'nowrap' }}>Never wrapping label</span>
+    <span style={at(700, 600)}>Shrink to fit</span>
+    <p style={at(1280, 600)}>
+      Inline <mark style={{ background: '#fde047' }}>highlighted phrase</mark> here.
+    </p>
+    <ul style={{ ...at(80, 720), width: 520, paddingLeft: 40, listStyle: 'disc outside' }}>
+      <li>Disc bullet one</li>
+      <li style={{ marginTop: 12 }}>Disc bullet two wraps onto a second line, being long enough</li>
+      <li>
+        Parent item
+        <ul style={{ paddingLeft: 40, listStyle: 'circle outside' }}>
+          <li>Nested child</li>
+        </ul>
+      </li>
+    </ul>
+    <ol style={{ ...at(700, 720), width: 500, paddingLeft: 40, listStyle: 'decimal outside' }}>
+      <li>First numbered</li>
+      <li>Second numbered</li>
+      <li>Third numbered</li>
+    </ol>
+  </div>
+);
+
+export default [First, Unpositioned, Effects, Stacking, Runs, Text] satisfies Page[];
