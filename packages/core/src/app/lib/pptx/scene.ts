@@ -122,7 +122,27 @@ export type TextNode = NodeBase & {
   /** Uniform scale carried by the world transform; font metrics are pre-multiplied. */
 };
 
-export type SceneNode = ShapeNode | PictureNode | TextNode;
+export type CellBorder = { width: number; color: Rgba; dash: Outline['dash'] } | null;
+
+export type TableCell = {
+  /** Placeholder slot covered by a spanning cell to the left (`h`), above (`v`) or both. */
+  merge: { h: boolean; v: boolean } | null;
+  gridSpan: number;
+  rowSpan: number;
+  paragraphs: Paragraph[];
+  fill: Rgba | null;
+  borders: { l: CellBorder; r: CellBorder; t: CellBorder; b: CellBorder };
+  margins: { l: number; r: number; t: number; b: number };
+  anchor: 't' | 'ctr' | 'b';
+};
+
+export type TableNode = NodeBase & {
+  kind: 'table';
+  columns: number[];
+  rows: { height: number; cells: TableCell[] }[];
+};
+
+export type SceneNode = ShapeNode | PictureNode | TextNode | TableNode;
 
 export type SlideScene = {
   background: Fill | null;

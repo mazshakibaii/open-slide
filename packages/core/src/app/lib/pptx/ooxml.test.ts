@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import { strFromU8, unzipSync, zipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
 import { buildPptxFiles, escapeXml, geometryXml } from './ooxml';
-import type { DeckScene, RunStyle } from './scene';
+import type { DeckScene, Paragraph, RunStyle, TableCell } from './scene';
 
 const PNG_1PX = Uint8Array.from(
   atob(
@@ -465,5 +465,119 @@ describe('radial fills', () => {
       '<a:path path="circle"><a:fillToRect l="30000" t="20000" r="70000" b="80000"/></a:path>',
     );
     expect(xml).toContain('<a:gs pos="60000">');
+  });
+});
+
+describe('tables', () => {
+  const para = (text: string, link: string | null = null): Paragraph[] => [
+    {
+      lineSpacingPx: 40,
+      align: 'r',
+      bullet: null,
+      marginLeftPx: 0,
+      indentPx: 0,
+      endSizePx: 28,
+      lines: [{ runs: [{ text, style: { ...style, sizePx: 28, link } }], sizePx: 28 }],
+    },
+  ];
+  const black = { r: 17, g: 17, b: 17, a: 1 };
+  const line = { width: 2, color: black, dash: 'solid' as const };
+  const cell = (over: Partial<TableCell> = {}): TableCell => ({
+    merge: null,
+    gridSpan: 1,
+    rowSpan: 1,
+    paragraphs: para('x'),
+    fill: null,
+    borders: { l: line, r: line, t: line, b: line },
+    margins: { l: 12, r: 12, t: 12, b: 12 },
+    anchor: 't',
+    ...over,
+  });
+  const files = buildPptxFiles({
+    images: [],
+    slides: [
+      {
+        background: null,
+        notes: null,
+        nodes: [
+          {
+            kind: 'table',
+            name: 'Table #revenue',
+            box: { x: 80, y: 80, w: 600, h: 120 },
+            rotationDeg: 0,
+            flipV: false,
+            columns: [200, 400],
+            rows: [
+              {
+                height: 60,
+                cells: [
+                  cell({
+                    gridSpan: 2,
+                    paragraphs: para('Header'),
+                    fill: { r: 226, g: 232, b: 240, a: 1 },
+                  }),
+                  cell({ merge: { h: true, v: false }, paragraphs: [] }),
+                ],
+              },
+              {
+                height: 60,
+                cells: [
+                  cell({
+                    paragraphs: para('South', 'https://example.com/s'),
+                    anchor: 'ctr',
+                    borders: {
+                      l: null,
+                      r: line,
+                      t: line,
+                      b: { width: 4, color: { r: 220, g: 38, b: 38, a: 1 }, dash: 'dash' },
+                    },
+                  }),
+                  cell({ paragraphs: [] }),
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  const slide = strFromU8(files['ppt/slides/slide1.xml']);
+  const rels = strFromU8(files['ppt/slides/_rels/slide1.xml.rels']);
+
+  it('writes a graphic frame holding a DrawingML table', () => {
+    expect(slide).toContain(
+      '<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="2" name="Table #revenue"/><p:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/></p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr>',
+    );
+    expect(slide).toContain(
+      '<p:xfrm><a:off x="508000" y="508000"/><a:ext cx="3810000" cy="762000"/></p:xfrm>',
+    );
+    expect(slide).toContain(
+      '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl><a:tblPr/><a:tblGrid><a:gridCol w="1270000"/><a:gridCol w="2540000"/></a:tblGrid><a:tr h="381000">',
+    );
+  });
+
+  it('spans and merges cells', () => {
+    expect(slide).toMatch(/<a:tc gridSpan="2"><a:txBody>.*?<a:t>Header<\/a:t>/);
+    expect(slide).toContain('<a:tc hMerge="1"><a:txBody><a:bodyPr/><a:lstStyle/><a:p>');
+  });
+
+  it('writes cell properties in schema order', () => {
+    const tcPr = /<a:tcPr [^>]*>.*?<\/a:tcPr>/gs;
+    const props = slide.match(tcPr) ?? [];
+    expect(props[0]).toMatch(
+      /^<a:tcPr marL="76200" marR="76200" marT="76200" marB="76200" anchor="t"><a:lnL w="12700"[^>]*>.*<\/a:lnL><a:lnR .*<\/a:lnR><a:lnT .*<\/a:lnT><a:lnB .*<\/a:lnB><a:solidFill><a:srgbClr val="E2E8F0"><\/a:srgbClr><\/a:solidFill><\/a:tcPr>$/,
+    );
+    expect(props[2]).toContain('anchor="ctr"><a:lnL><a:noFill/></a:lnL>');
+    expect(props[2]).toMatch(
+      /<a:lnB w="25400"[^>]*><a:solidFill><a:srgbClr val="DC2626"><\/a:srgbClr><\/a:solidFill><a:prstDash val="dash"\/>/,
+    );
+    expect(props[2]).toMatch(/<\/a:lnB><a:noFill\/><\/a:tcPr>$/);
+  });
+
+  it('writes cell text as paragraphs, links included', () => {
+    expect(slide).toMatch(/<a:tc><a:txBody><a:bodyPr\/><a:lstStyle\/><a:p><a:pPr algn="r">/);
+    const rId = /<a:hlinkClick r:id="(rId\d+)"/.exec(slide)?.[1];
+    expect(rels).toContain(`Id="${rId}"`);
+    expect(rels).toContain('Target="https://example.com/s" TargetMode="External"');
   });
 });
