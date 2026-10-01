@@ -29,4 +29,19 @@ const Unpositioned: Page = () => (
   </div>
 );
 
-export default [First, Unpositioned] satisfies Page[];
+const css = `
+.pptx-cases .tw-shadow { box-shadow: 0 0 #0000, 0 0 #0000, 0 10px 15px -3px rgba(0, 0, 0, 0.35), 0 4px 6px -4px rgba(0, 0, 0, 0.35); }
+`;
+
+const Effects: Page = () => (
+  <div className="pptx-cases" style={{ ...page, position: 'relative' }}>
+    <style>{css}</style>
+    <div
+      id="tw-shadow"
+      className="tw-shadow"
+      style={{ ...at(80, 80), width: 360, height: 160, background: '#fff', borderRadius: 12 }}
+    />
+  </div>
+);
+
+export default [First, Unpositioned, Effects] satisfies Page[];

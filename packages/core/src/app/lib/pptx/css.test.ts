@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   applyTextTransform,
   decompose,
+  dominantShadow,
   geometryFor,
   gradientLineLength,
   multiply,
@@ -138,6 +139,25 @@ describe('parseShadows', () => {
     expect(s[0]).toMatchObject({ x: 0, y: 10, blur: 30, spread: 0, inset: false });
     expect(s[1]).toMatchObject({ spread: 2, inset: true });
     expect(parseShadows('none')).toEqual([]);
+  });
+  it('drops the invisible layers Tailwind pads every shadow list with', () => {
+    const s = parseShadows(
+      'rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0.35) 0px 10px 15px -3px, rgba(0, 0, 0, 0.35) 0px 4px 6px -4px',
+    );
+    expect(s).toHaveLength(2);
+    expect(s[0]).toMatchObject({ y: 10, blur: 15, spread: -3 });
+    expect(parseShadows('rgb(0, 0, 0) 0px 0px 0px 0px')).toEqual([]);
+  });
+});
+
+describe('dominantShadow', () => {
+  it('keeps the layer that contributes most when only one can be drawn', () => {
+    const layers = parseShadows(
+      'rgba(0, 0, 0, 0.2) 0px 8px 10px -5px, rgba(0, 0, 0, 0.14) 0px 16px 24px 2px, rgba(0, 0, 0, 0.12) 0px 6px 30px 5px, rgb(255, 0, 0) 0px 0px 0px 2px inset',
+    );
+    expect(dominantShadow(layers, false)).toMatchObject({ y: 16, blur: 24 });
+    expect(dominantShadow(layers, true)).toMatchObject({ spread: 2, inset: true });
+    expect(dominantShadow([], false)).toBeUndefined();
   });
 });
 

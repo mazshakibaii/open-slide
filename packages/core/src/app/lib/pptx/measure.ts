@@ -4,6 +4,7 @@ import {
   applyToPoint,
   type ColorParser,
   decompose,
+  dominantShadow,
   geometryFor,
   IDENTITY,
   isIdentity,
@@ -571,7 +572,7 @@ function isPlainInline(ctx: Ctx, el: Element, cs: CSSStyleDeclaration): boolean 
 
 function paintsAnything(cs: CSSStyleDeclaration, color: ColorParser): boolean {
   if (cs.backgroundImage !== 'none') return true;
-  if (cs.boxShadow !== 'none') return true;
+  if (parseShadows(cs.boxShadow, color).length > 0) return true;
   if (isVisibleColor(color(cs.backgroundColor))) return true;
   return borderSides(cs, color).some((s) => s.visible);
 }
@@ -670,8 +671,8 @@ function paintBoxRect(ctx: Ctx, m: Measured, rect: Rect): void {
   const bg = ctx.color(cs.backgroundColor);
   const sides = borderSides(cs, ctx.color);
   const shadows = parseShadows(cs.boxShadow, ctx.color);
-  const outer = shadows.find((s) => !s.inset);
-  const inner = shadows.find((s) => s.inset);
+  const outer = dominantShadow(shadows, false);
+  const inner = dominantShadow(shadows, true);
   const layers = cs.backgroundImage === 'none' ? [] : splitTopLevel(cs.backgroundImage);
   const gradient =
     layers[0] && !layers[0].startsWith('url(')

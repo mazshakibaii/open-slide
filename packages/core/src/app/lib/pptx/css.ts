@@ -391,16 +391,38 @@ export function parseShadows(value: string, colorParser: ColorParser = parseColo
       }
     }
     if (!color || lengths.length < 2) continue;
-    out.push({
+    const shadow = {
       x: lengths[0],
       y: lengths[1],
       blur: Math.max(0, lengths[2] ?? 0),
       spread: lengths[3] ?? 0,
       color,
       inset,
-    });
+    };
+    // Tailwind pads every shadow list with `0 0 #0000` ring layers.
+    if (color.a <= 0.002 || shadowExtent(shadow) === 0) continue;
+    out.push(shadow);
   }
   return out;
+}
+
+function shadowExtent(s: Shadow): number {
+  return Math.hypot(s.x, s.y) + s.blur + Math.max(0, s.spread);
+}
+
+/** PowerPoint draws one outer and one inner shadow per shape, so keep the most visible layer. */
+export function dominantShadow(shadows: Shadow[], inset: boolean): Shadow | undefined {
+  let best: Shadow | undefined;
+  let bestScore = -1;
+  for (const s of shadows) {
+    if (s.inset !== inset) continue;
+    const score = s.color.a * (Math.hypot(s.x, s.y) + s.blur + Math.abs(s.spread) + 1);
+    if (score > bestScore) {
+      best = s;
+      bestScore = score;
+    }
+  }
+  return best;
 }
 
 export type CornerRadius = { x: number; y: number };

@@ -52,3 +52,11 @@ test('places absolute content of later pages against their own canvas', () => {
   expect(marker.y).toBeGreaterThanOrEqual(290);
   expect(marker.y).toBeLessThanOrEqual(310);
 });
+
+test('keeps the visible layer of a Tailwind shadow list', () => {
+  const card = shapeNamed(slide(3), 'Rounded Rectangle #tw-shadow');
+  const shadow = /<a:outerShdw [^>]*dist="(\d+)"[^>]*>(.*?)<\/a:outerShdw>/.exec(card);
+  expect(shadow).not.toBeNull();
+  expect(Number(shadow?.[1])).toBeGreaterThan(0);
+  expect(shadow?.[2]).not.toContain('<a:alpha val="0"/>');
+});
