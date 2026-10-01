@@ -581,3 +581,56 @@ describe('tables', () => {
     expect(rels).toContain('Target="https://example.com/s" TargetMode="External"');
   });
 });
+
+describe('underlines', () => {
+  it('writes the underline style and its own colour', () => {
+    const files = buildPptxFiles({
+      images: [],
+      slides: [
+        {
+          background: null,
+          notes: null,
+          nodes: [
+            {
+              kind: 'text',
+              name: 'Text: Wavy',
+              box: { x: 0, y: 0, w: 400, h: 60 },
+              rotationDeg: 0,
+              flipV: false,
+              wrap: false,
+              paragraphs: [
+                {
+                  lineSpacingPx: 60,
+                  align: 'l',
+                  bullet: null,
+                  marginLeftPx: 0,
+                  indentPx: 0,
+                  endSizePx: 40,
+                  lines: [
+                    {
+                      sizePx: 40,
+                      runs: [
+                        {
+                          text: 'Wavy',
+                          style: {
+                            ...style,
+                            underline: true,
+                            underlineStyle: 'wavy',
+                            underlineColor: { r: 239, g: 68, b: 68, a: 1 },
+                          },
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const xml = strFromU8(files['ppt/slides/slide1.xml']);
+    expect(xml).toContain('u="wavy"');
+    expect(xml).toMatch(/<a:uFill><a:solidFill><a:srgbClr val="EF4444">/);
+  });
+});

@@ -284,3 +284,27 @@ test('draws a radial gradient as a native path gradient', () => {
   );
   expect(pictureAt(xml, 820, 230)).toBeUndefined();
 });
+
+test('draws an uneven border on a rounded box as a rounded ring', () => {
+  const xml = slide(9);
+  const ring = shapeNamed(xml, 'Rounded Rectangle #callout border');
+  expect(ring).toContain('<a:srgbClr val="22C55E">');
+  const inside = shapeNamed(xml, 'Rounded Rectangle #callout"');
+  expect(inside).toContain('<a:srgbClr val="1E293B">');
+  expect(box(inside).x).toBe(90);
+  expect(shapes(xml).some((s) => s.includes('name="Border"'))).toBe(false);
+});
+
+test('draws CSS outline around the box', () => {
+  const outline = shapeNamed(slide(9), 'Outline');
+  expect(outline).toContain('<a:prstDash val="dash"/>');
+  expect(outline).toContain('<a:srgbClr val="F43F5E">');
+  expect(box(outline)).toMatchObject({ x: 754, y: 494, w: 312, h: 92 });
+});
+
+test('keeps the underline style and colour', () => {
+  const shape = shapeNamed(slide(9), 'Text: A squiggly mistake');
+  expect(shape).toMatch(
+    /u="wavy"[^>]*>(?:(?!<\/a:rPr>).)*<a:uFill><a:solidFill><a:srgbClr val="EF4444">/,
+  );
+});

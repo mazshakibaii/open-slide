@@ -75,7 +75,13 @@ const PITCH_TOLERANCE = 0.6;
 const MEDIA_TAGS = new Set(['IMG', 'SVG', 'VIDEO', 'CANVAS', 'PICTURE']);
 const SKIPPED_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'IFRAME', 'LINK', 'META']);
 
-type Decoration = { underline: boolean; strike: boolean };
+type Decoration = {
+  underline: boolean;
+  strike: boolean;
+  /** The underline as declared by the box that draws it, which may not be the text's own. */
+  underlineStyle: string;
+  underlineColor: string;
+};
 
 type Slot = { node: SceneNode | null };
 
@@ -179,7 +185,7 @@ async function measureMaterialized(options: MeasurePageOptions): Promise<SlideSc
       opacity: 1,
       clip: slideClip,
       clipRadii: null,
-      decoration: { underline: false, strike: false },
+      decoration: { underline: false, strike: false, underlineStyle: '', underlineColor: '' },
       layer,
       link: null,
       highlight: null,
@@ -676,11 +682,21 @@ function isFlexOrGridItem(el: Element): boolean {
 
 function mergeDecoration(parent: Decoration, cs: CSSStyleDeclaration): Decoration {
   const line = cs.textDecorationLine;
+  const own = line.includes('underline');
   return {
-    underline: parent.underline || line.includes('underline'),
+    underline: parent.underline || own,
     strike: parent.strike || line.includes('line-through'),
+    underlineStyle: own ? cs.textDecorationStyle : parent.underlineStyle,
+    underlineColor: own ? cs.textDecorationColor : parent.underlineColor,
   };
 }
+
+const UNDERLINE_STYLES: Record<string, RunStyle['underlineStyle']> = {
+  double: 'dbl',
+  dotted: 'dotted',
+  dashed: 'dash',
+  wavy: 'wavy',
+};
 
 function paintChildren(ctx: Ctx, children: Element[], inherited: Inherited): void {
   type Entry = { el: Element; z: number; order: number; positioned: boolean };
@@ -861,6 +877,7 @@ function paintsAnything(cs: CSSStyleDeclaration, color: ColorParser): boolean {
   if (cs.backgroundImage !== 'none') return true;
   if (parseShadows(cs.boxShadow, color).length > 0) return true;
   if (isVisibleColor(color(cs.backgroundColor))) return true;
+  if (hasOutline(cs)) return true;
   return borderSides(cs, color).some((s) => s.visible);
 }
 
@@ -950,6 +967,7 @@ function paintBox(ctx: Ctx, m: Measured, borders = true): void {
   for (const rect of rects) {
     if (rect.w < MIN_SIZE && rect.h < MIN_SIZE) continue;
     paintBoxRect(ctx, m, rect, borders);
+    paintOutline(ctx, m, rect);
   }
 }
 
@@ -1002,6 +1020,20 @@ function paintBoxRect(ctx: Ctx, m: Measured, rect: Rect, borders = true): void {
     ownOuter ?? (fills.length > 0 || anyBorder ? (m.dropShadow ?? undefined) : undefined);
   const hasShape = fills.length > 0 || anyBorder || outer;
   if (!hasShape && !imageLayer) return;
+
+  if (anyBorder && !uniform && hasRadius(radii) && !m.ellipse) {
+    if (paintBorderRing(ctx, m, rect, sides, radii, fills, outer, inner)) {
+      if (imageLayer) {
+        paintBackgroundImage(ctx, m, rect, imageLayer, geometryFor(radii, rect.w, rect.h), radii);
+      }
+      return;
+    }
+    // Strips would square off the corners; draw the box as the browser does.
+    if (!isInlineDisplay(cs.display)) {
+      requestRaster(ctx, m, 'self');
+      return;
+    }
+  }
 
   let outline: Outline | null = null;
   let shapeRect = rect;
@@ -1094,6 +1126,102 @@ function paintBoxRect(ctx: Ctx, m: Measured, rect: Rect, borders = true): void {
       );
     }
   }
+}
+
+/**
+ * A rounded box with uneven solid borders of one colour (a callout's thick left
+ * edge): the border colour fills the rounded box and the background sits on
+ * top, inset by each side — the shape CSS draws, with no strips over corners.
+ */
+function paintBorderRing(
+  ctx: Ctx,
+  m: Measured,
+  rect: Rect,
+  sides: BorderSide[],
+  radii: Radii,
+  fills: Fill[],
+  outer: Shadow | undefined,
+  inner: Shadow | undefined,
+): boolean {
+  const visible = sides.filter((s) => s.visible);
+  const ring = visible[0]?.color;
+  if (!ring) return false;
+  if (visible.some((s) => s.style !== 'solid' || !s.color || !sameColor(s.color, ring)))
+    return false;
+  const [fill] = fills;
+  if (fills.length !== 1 || fill.kind !== 'solid' || fill.color.a < 0.99) return false;
+  const [t, r, b, l] = sides.map((s) => (s.visible ? s.width : 0));
+  const inside: Rect = {
+    x: rect.x + l,
+    y: rect.y + t,
+    w: Math.max(0, rect.w - l - r),
+    h: Math.max(0, rect.h - t - b),
+  };
+  const insideRadii: Radii = [
+    { x: Math.max(0, radii[0].x - l), y: Math.max(0, radii[0].y - t) },
+    { x: Math.max(0, radii[1].x - r), y: Math.max(0, radii[1].y - t) },
+    { x: Math.max(0, radii[2].x - r), y: Math.max(0, radii[2].y - b) },
+    { x: Math.max(0, radii[3].x - l), y: Math.max(0, radii[3].y - b) },
+  ];
+  const geometry = geometryFor(radii, rect.w, rect.h);
+  const name = shapeName(m.el, geometry);
+  pushSlot(
+    ctx,
+    makeShape(
+      `${name} border`,
+      rect,
+      m.world,
+      geometry,
+      { kind: 'solid', color: withAlpha(ring, m.opacity) },
+      null,
+      outer ? toShadowEffect(outer, m.opacity) : null,
+    ),
+  );
+  pushSlot(
+    ctx,
+    makeShape(
+      name,
+      inside,
+      m.world,
+      geometryFor(insideRadii, inside.w, inside.h),
+      fill,
+      null,
+      inner ? toShadowEffect(inner, m.opacity) : null,
+    ),
+  );
+  return true;
+}
+
+function hasOutline(cs: CSSStyleDeclaration): boolean {
+  return cs.outlineStyle !== 'none' && cs.outlineStyle !== 'hidden' && parsePx(cs.outlineWidth) > 0;
+}
+
+/** `outline` draws outside the border box, following its corners, offset by `outline-offset`. */
+function paintOutline(ctx: Ctx, m: Measured, rect: Rect): void {
+  const { cs } = m;
+  if (!hasOutline(cs)) return;
+  const color = ctx.color(cs.outlineColor);
+  if (!isVisibleColor(color)) return;
+  const width = parsePx(cs.outlineWidth);
+  const grow = parsePx(cs.outlineOffset) + width / 2;
+  const box = expandRect(rect, grow);
+  const radii = radiiOf(cs, rect.w, rect.h).map((c) =>
+    c.x > 0 || c.y > 0 ? { x: Math.max(0, c.x + grow), y: Math.max(0, c.y + grow) } : c,
+  ) as Radii;
+  const dash =
+    cs.outlineStyle === 'dashed' ? 'dash' : cs.outlineStyle === 'dotted' ? 'dot' : 'solid';
+  pushSlot(
+    ctx,
+    makeShape(
+      'Outline',
+      box,
+      m.world,
+      geometryFor(radii, box.w, box.h),
+      null,
+      { width, color: withAlpha(color, m.opacity), dash },
+      null,
+    ),
+  );
 }
 
 function sameColor(a: Rgba, b: Rgba): boolean {
@@ -1472,7 +1600,7 @@ function runStyle(ctx: Ctx, cs: CSSStyleDeclaration, inherited: Inherited): RunS
     sizePx: parsePx(cs.fontSize),
     bold: (Number.parseInt(cs.fontWeight, 10) || 400) >= 600,
     italic: cs.fontStyle !== 'normal',
-    underline: inherited.decoration.underline || cs.textDecorationLine.includes('underline'),
+    ...underlineOf(ctx, cs, mergeDecoration(inherited.decoration, cs), color, inherited.opacity),
     strike: inherited.decoration.strike || cs.textDecorationLine.includes('line-through'),
     color: withAlpha(color, inherited.opacity),
     letterSpacingPx: cs.letterSpacing === 'normal' ? 0 : parsePx(cs.letterSpacing),
@@ -1488,6 +1616,22 @@ function runStyle(ctx: Ctx, cs: CSSStyleDeclaration, inherited: Inherited): RunS
     link: inherited.link,
     highlight: inherited.highlight,
     gradient: inherited.textFill,
+  };
+}
+
+function underlineOf(
+  ctx: Ctx,
+  cs: CSSStyleDeclaration,
+  decoration: Decoration,
+  textColor: Rgba,
+  opacity: number,
+): Pick<RunStyle, 'underline' | 'underlineStyle' | 'underlineColor'> {
+  if (!decoration.underline) return { underline: false };
+  const color = ctx.color(decoration.underlineColor || cs.textDecorationColor);
+  return {
+    underline: true,
+    underlineStyle: UNDERLINE_STYLES[decoration.underlineStyle] ?? 'sng',
+    underlineColor: color && !sameColor(color, textColor) ? withAlpha(color, opacity) : null,
   };
 }
 

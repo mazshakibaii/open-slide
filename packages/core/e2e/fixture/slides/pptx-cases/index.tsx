@@ -292,6 +292,32 @@ const Boxes: Page = () => (
         backgroundImage: 'radial-gradient(at 30% 20%, rgba(14, 165, 233, 0.8), transparent 60%)',
       }}
     />
+    <div
+      id="callout"
+      style={{
+        ...at(80, 500),
+        width: 560,
+        height: 140,
+        background: '#1e293b',
+        borderLeft: '10px solid #22c55e',
+        borderRadius: 24,
+      }}
+    />
+    <div
+      id="ringed"
+      style={{
+        ...at(760, 500),
+        width: 300,
+        height: 80,
+        borderRadius: 12,
+        outline: '4px dashed #f43f5e',
+        outlineOffset: 4,
+      }}
+    />
+    <p style={at(1200, 500)}>
+      A <span style={{ textDecoration: 'underline wavy rgb(239, 68, 68)' }}>squiggly mistake</span>{' '}
+      here.
+    </p>
   </div>
 );
 

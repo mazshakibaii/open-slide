@@ -486,7 +486,7 @@ function runXml(run: Run, ctx: EmitContext): string {
     s.caps ? `cap="${s.caps}"` : '',
     s.bold ? 'b="1"' : '',
     s.italic ? 'i="1"' : '',
-    s.underline ? 'u="sng"' : '',
+    s.underline ? `u="${s.underlineStyle ?? 'sng'}"` : '',
     s.strike ? 'strike="sngStrike"' : '',
     Math.abs(s.letterSpacingPx) > 0.01 ? `spc="${pxToHundredthsPt(s.letterSpacingPx)}"` : '',
     s.baselineShift === 'super'
@@ -515,7 +515,11 @@ function runXml(run: Run, ctx: EmitContext): string {
   const fill = s.gradient
     ? fillXml({ kind: 'gradient', ...s.gradient }, ctx)
     : `<a:solidFill>${colorXml(s.color)}</a:solidFill>`;
-  return `<a:r><a:rPr ${attrs}>${outline}${fill}${shadow}${highlight}<a:latin typeface="${font}"/><a:ea typeface="${font}"/><a:cs typeface="${font}"/>${link}</a:rPr><a:t>${escapeXml(run.text)}</a:t></a:r>`;
+  const underlineFill =
+    s.underline && s.underlineColor
+      ? `<a:uFill><a:solidFill>${colorXml(s.underlineColor)}</a:solidFill></a:uFill>`
+      : '';
+  return `<a:r><a:rPr ${attrs}>${outline}${fill}${shadow}${highlight}${underlineFill}<a:latin typeface="${font}"/><a:ea typeface="${font}"/><a:cs typeface="${font}"/>${link}</a:rPr><a:t>${escapeXml(run.text)}</a:t></a:r>`;
 }
 
 function xfrmXml(node: { box: Rect; rotationDeg: number; flipV: boolean }): string {

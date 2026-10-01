@@ -89,6 +89,9 @@ export type RunStyle = {
   highlight: Rgba | null;
   /** `background-clip: text` gradient, painted instead of `color`. */
   gradient: { angleDeg: number; stops: GradientStop[] } | null;
+  underlineStyle?: 'sng' | 'dbl' | 'dotted' | 'dash' | 'wavy';
+  /** Underline colour when `text-decoration-color` differs from the text. */
+  underlineColor?: Rgba | null;
 };
 
 export type Run = { text: string; style: RunStyle };
