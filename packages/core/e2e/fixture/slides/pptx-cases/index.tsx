@@ -55,6 +55,18 @@ const Effects: Page = () => (
     />
     <h2 style={{ ...at(800, 320), filter: 'blur(0px)' }}>Settled blur-in heading</h2>
     <p style={{ ...at(800, 420), filter: 'opacity(0.5)' }}>Half opacity filter</p>
+    <div
+      style={{
+        ...at(80, 700),
+        width: 400,
+        height: 200,
+        background: '#4f46e5',
+        color: '#fff',
+        transform: 'perspective(800px) rotateY(25deg)',
+      }}
+    >
+      Tilted card text
+    </div>
   </div>
 );
 

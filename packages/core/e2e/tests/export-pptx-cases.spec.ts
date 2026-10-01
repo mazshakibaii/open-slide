@@ -75,3 +75,17 @@ test('keeps text native under filters that draw nothing', () => {
   expect(shapeNamed(xml, 'Text: Settled blur-in heading')).toContain('txBox="1"');
   expect(shapeNamed(xml, 'Text: Half opacity filter')).toContain('<a:alpha val="50000"/>');
 });
+
+function pictureAt(xml: string, x: number, y: number): string | undefined {
+  return shapes(xml).find((s) => {
+    if (!s.startsWith('<p:pic>')) return false;
+    const b = box(s);
+    return x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
+  });
+}
+
+test('rasterises a 3D-transformed element instead of dropping it', () => {
+  const picture = pictureAt(slide(3), 280, 800);
+  expect(picture).toBeDefined();
+  expect(picture).toContain('name="Rendered image"');
+});

@@ -91,6 +91,8 @@ type Ctx = {
   frame: HTMLElement;
   frameRect: DOMRect;
   transforms: Map<Element, Mat>;
+  /** Painted bounds of elements whose transform has no 2D equivalent (3D, z-axis rotation). */
+  projected: Map<Element, DOMRect>;
   slots: Slot[];
   rasters: { slot: Slot; request: RasterRequest; svg: Uint8Array | null }[];
   pending: Promise<void>[];
@@ -113,7 +115,7 @@ export async function measurePage(options: MeasurePageOptions): Promise<SlideSce
   const ctx: Ctx = {
     frame,
     frameRect: frame.getBoundingClientRect(),
-    transforms: snapshotTransforms(frame),
+    ...snapshotTransforms(frame),
     slots: [],
     rasters: [],
     pending: [],
@@ -194,15 +196,17 @@ function coversSlide(node: SceneNode): boolean {
   );
 }
 
-function snapshotTransforms(frame: HTMLElement): Map<Element, Mat> {
-  const out = new Map<Element, Mat>();
+function snapshotTransforms(frame: HTMLElement): Pick<Ctx, 'transforms' | 'projected'> {
+  const transforms = new Map<Element, Mat>();
+  const projected = new Map<Element, DOMRect>();
   const all = [frame, ...Array.from(frame.querySelectorAll('*'))];
   for (const el of all) {
     const cs = getComputedStyle(el);
     const local = composeLocalTransform(cs);
-    if (local) out.set(el, local);
+    if (local) transforms.set(el, local);
+    else projected.set(el, el.getBoundingClientRect());
   }
-  return out;
+  return { transforms, projected };
 }
 
 function composeLocalTransform(cs: CSSStyleDeclaration): Mat | null {
@@ -358,14 +362,14 @@ function pushSlot(ctx: Ctx, node: SceneNode | null): Slot {
   return slot;
 }
 
-function requestRaster(ctx: Ctx, m: Measured, mode: RasterMode): void {
+function requestRaster(ctx: Ctx, m: Measured, mode: RasterMode, vector = true): void {
   const shadows = parseShadows(m.cs.boxShadow, ctx.color);
   const shadowExtent = shadows.reduce(
     (max, s) => Math.max(max, Math.hypot(s.x, s.y) + s.blur + Math.max(0, s.spread)),
     0,
   );
   const bounds = transformedBounds(m.world, m.rect.x, m.rect.y, m.rect.w, m.rect.h);
-  const svg = vectorCompanion(m);
+  const svg = vector ? vectorCompanion(m) : null;
   const bleed = svg ? 0 : 3 * parseBlurPx(m.cs.filter) + shadowExtent + 8;
   let region = clampToSlide(expandRect(bounds, bleed));
   if (m.clip && isIdentity(m.world) && mode === 'self') {
@@ -431,6 +435,13 @@ function paintBlock(ctx: Ctx, el: Element, inherited: Inherited): void {
     for (const child of Array.from(el.children)) paintBlock(ctx, child, inherited);
     return;
   }
+  const projected = ctx.projected.get(el);
+  if (projected) {
+    const rect = rel(ctx, projected);
+    const m = { el, cs, rect, world: IDENTITY, opacity: inherited.opacity, clip: inherited.clip };
+    requestRaster(ctx, m, 'subtree', false);
+    return;
+  }
   const m = measureElement(ctx, el, cs, inherited);
   if (!m) return;
   const tag = el.tagName.toUpperCase();
@@ -482,6 +493,7 @@ function paintChildren(ctx: Ctx, children: Element[], inherited: Inherited): voi
     const cs = getComputedStyle(child);
     const positioned =
       cs.position !== 'static' ||
+      ctx.projected.has(child) ||
       !isIdentity(ctx.transforms.get(child) ?? IDENTITY) ||
       Number.parseFloat(cs.opacity) < 1 ||
       cs.filter !== 'none' ||
