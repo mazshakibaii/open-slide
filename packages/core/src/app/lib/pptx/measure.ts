@@ -1301,6 +1301,7 @@ function runStyle(ctx: Ctx, cs: CSSStyleDeclaration, inherited: Inherited): RunS
   return {
     font: resolveFontFamily(cs.fontFamily),
     sizePx: parsePx(cs.fontSize),
+    weight: Number.parseInt(cs.fontWeight, 10) || 400,
     bold: (Number.parseInt(cs.fontWeight, 10) || 400) >= 600,
     italic: cs.fontStyle !== 'normal',
     underline: inherited.decoration.underline || cs.textDecorationLine.includes('underline'),

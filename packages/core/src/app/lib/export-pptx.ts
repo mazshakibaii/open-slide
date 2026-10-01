@@ -20,13 +20,14 @@ export type PptxExportProgress = {
 type ProgressFn = (progress: PptxExportProgress) => void;
 
 async function loadPipeline() {
-  const [render, measure, images, raster, color, ooxml, fflate] = await Promise.all([
+  const [render, measure, images, raster, color, ooxml, fonts, fflate] = await Promise.all([
     import('./pptx/render'),
     import('./pptx/measure'),
     import('./pptx/images'),
     import('./pptx/raster'),
     import('./pptx/color'),
     import('./pptx/ooxml'),
+    import('./pptx/embed-fonts'),
     import('fflate'),
   ]);
   return {
@@ -36,6 +37,7 @@ async function loadPipeline() {
     ...raster,
     ...color,
     ...ooxml,
+    ...fonts,
     zipSync: fflate.zipSync,
   };
 }
@@ -90,9 +92,10 @@ export async function exportSlideAsPptx(
       });
     }
     onProgress?.({ phase: 'generating', current: total, total, percent: 98 });
+    const fonts = await lib.embedFonts(slides);
     await images.optimize();
     download(
-      lib.buildPptxFiles({ slides, images: images.images }),
+      lib.buildPptxFiles({ slides, images: images.images, fonts }),
       lib.zipSync,
       lib.PPTX_MIME,
       slideId,
