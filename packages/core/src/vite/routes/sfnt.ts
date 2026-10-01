@@ -9,6 +9,8 @@ import { json } from './context.ts';
 // The PPTX export embeds fonts as plain sfnt, and browsers cannot brotli-decompress.
 
 const MAX_BYTES = 32 * 1024 * 1024;
+// Brotli can expand a small body enormously; no real font decodes past this.
+const MAX_DECODED_BYTES = 128 * 1024 * 1024;
 
 function readBytes(req: Connect.IncomingMessage): Promise<Uint8Array> {
   return new Promise((resolve, reject) => {
@@ -35,7 +37,11 @@ export function registerSfntRoutes(server: ViteDevServer): void {
     if (!check.ok) return json(res, check.status, { error: check.error });
     try {
       const woff2 = await readBytes(req);
-      const sfnt = decodeWoff2(woff2, (data) => new Uint8Array(brotliDecompressSync(data)));
+      const sfnt = decodeWoff2(
+        woff2,
+        (data) =>
+          new Uint8Array(brotliDecompressSync(data, { maxOutputLength: MAX_DECODED_BYTES })),
+      );
       res.statusCode = 200;
       res.setHeader('content-type', 'font/sfnt');
       res.setHeader('cache-control', 'no-store');
