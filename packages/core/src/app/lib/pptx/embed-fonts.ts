@@ -1,4 +1,5 @@
 import { unzlibSync } from 'fflate';
+import { isFontAvailable } from './fonts';
 import type { EmbeddedFont, FontSlot, Run, SlideScene } from './scene';
 import { embeddingVerdict, type FontInfo, readFontInfo, sniffFontFormat, woffToSfnt } from './sfnt';
 
@@ -159,6 +160,40 @@ async function loadFace(url: string): Promise<LoadedFace | string> {
   return { bytes, info: info as FontInfo };
 }
 
+const WEIGHT_FACES: Record<number, string[]> = {
+  100: ['Thin', 'Hairline'],
+  200: ['ExtraLight', 'Extra Light', 'UltraLight'],
+  300: ['Light'],
+  500: ['Medium'],
+  600: ['SemiBold', 'Semibold', 'Semi Bold', 'DemiBold'],
+  800: ['ExtraBold', 'Extra Bold', 'UltraBold', 'Heavy'],
+  900: ['Black', 'Heavy'],
+};
+
+/**
+ * Installed fonts expose weights other than regular and bold as families of
+ * their own ("Segoe UI Semibold"), which is the only way a PowerPoint run can
+ * ask for them.
+ */
+export function localFace(
+  family: string,
+  weight: number,
+  available: (family: string) => boolean = isFontAvailable,
+): string | null {
+  const bucket = Math.min(900, Math.max(100, Math.round(weight / 100) * 100));
+  for (const name of WEIGHT_FACES[bucket] ?? []) {
+    const candidate = `${family} ${name}`;
+    if (available(candidate)) return candidate;
+  }
+  return null;
+}
+
+function renameToLocalFace(group: RunGroup): void {
+  const face = localFace(group.family, group.weight);
+  if (!face) return;
+  for (const run of group.runs) run.style = { ...run.style, font: face, bold: false };
+}
+
 function slotOf(bold: boolean, italic: boolean): FontSlot {
   return bold ? (italic ? 'boldItalic' : 'bold') : italic ? 'italic' : 'regular';
 }
@@ -201,7 +236,10 @@ export async function embedFonts(slides: SlideScene[]): Promise<EmbeddedFont[]> 
   const warned = new Set<string>();
   for (const group of groups) {
     const rule = pickRule(rules, group);
-    if (!rule) continue;
+    if (!rule) {
+      renameToLocalFace(group);
+      continue;
+    }
     let face: LoadedFace | string = 'none of its sources could be loaded';
     for (const url of rule.sources) {
       let load = loads.get(url);
@@ -217,6 +255,7 @@ export async function embedFonts(slides: SlideScene[]): Promise<EmbeddedFont[]> 
         warned.add(group.family);
         console.warn(`[open-slide] pptx export: "${group.family}" is not embedded: ${face}`);
       }
+      renameToLocalFace(group);
       continue;
     }
     const { info, bytes } = face;

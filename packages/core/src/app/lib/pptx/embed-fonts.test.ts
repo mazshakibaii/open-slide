@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   type FaceRule,
+  localFace,
   parseRanges,
   parseSources,
   parseWeights,
@@ -68,5 +69,22 @@ describe('pickRule', () => {
     const cyrillic = rule({ ranges: [[0x400, 0x4ff]] });
     expect(pickRule([cyrillic, latin], group(400, 'Hello'))).toBe(latin);
     expect(pickRule([latin, cyrillic], group(400, 'Привет'))).toBe(cyrillic);
+  });
+});
+
+describe('localFace', () => {
+  const installed = new Set(['Segoe UI Semibold', 'Segoe UI Light', 'Avenir Next Medium']);
+  const available = (family: string) => installed.has(family);
+
+  it('names an installed weight face for weights between regular and bold', () => {
+    expect(localFace('Segoe UI', 600, available)).toBe('Segoe UI Semibold');
+    expect(localFace('Segoe UI', 300, available)).toBe('Segoe UI Light');
+    expect(localFace('Avenir Next', 500, available)).toBe('Avenir Next Medium');
+  });
+
+  it('leaves regular, bold and uninstalled weights to the bold flag', () => {
+    expect(localFace('Segoe UI', 400, available)).toBeNull();
+    expect(localFace('Segoe UI', 700, available)).toBeNull();
+    expect(localFace('Segoe UI', 900, available)).toBeNull();
   });
 });
