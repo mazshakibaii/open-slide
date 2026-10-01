@@ -60,7 +60,7 @@ import type {
   TextNode,
   TextShadow,
 } from './scene';
-import { buildVectorCompanion } from './svg';
+import { buildVectorCompanion, type SvgTextChunk, snapshotSvgText, textNodeFor } from './svg';
 import { type Atom, buildSegments, groupIntoLines } from './text-lines';
 
 const MEASURE_CLASS = 'os-pptx-measure';
@@ -106,6 +106,8 @@ type Ctx = {
   transforms: Map<Element, Mat>;
   /** Painted bounds of elements whose transform has no 2D equivalent (3D, z-axis rotation). */
   projected: Map<Element, DOMRect>;
+  /** SVG text read before transforms are switched off; null where it must stay in the picture. */
+  svgText: Map<SVGSVGElement, SvgTextChunk[] | null>;
   slots: Slot[];
   rasters: { slot: Slot; request: RasterRequest; svg: Uint8Array | null }[];
   pending: Promise<void>[];
@@ -129,6 +131,7 @@ export async function measurePage(options: MeasurePageOptions): Promise<SlideSce
     frame,
     frameRect: frame.getBoundingClientRect(),
     ...snapshotTransforms(frame),
+    svgText: snapshotSvgText(frame, options.color),
     slots: [],
     rasters: [],
     pending: [],
@@ -386,7 +389,8 @@ function requestRaster(ctx: Ctx, m: Measured, mode: RasterMode, vector = true): 
     0,
   );
   const bounds = transformedBounds(m.world, m.rect.x, m.rect.y, m.rect.w, m.rect.h);
-  const svg = vector ? vectorCompanion(ctx, m) : null;
+  const text = nativeSvgText(ctx, m, mode);
+  const svg = vector ? vectorCompanion(ctx, m, text.length > 0) : null;
   const bleed = svg ? 0 : 3 * parseBlurPx(m.cs.filter) + shadowExtent + 8;
   let region = clampToSlide(expandRect(bounds, bleed));
   if (m.clip && isIdentity(m.world) && mode === 'self') {
@@ -394,11 +398,24 @@ function requestRaster(ctx: Ctx, m: Measured, mode: RasterMode, vector = true): 
   }
   if (region.w <= 0 || region.h <= 0) return;
   const slot = pushSlot(ctx, null);
+  const hideText = text.length > 0;
   ctx.rasters.push({
     slot,
-    request: { target: m.el, mode, region, trim: !svg, lossless: !!svg },
+    request: { target: m.el, mode, region, trim: !svg, hideText, lossless: !!svg },
     svg,
   });
+  for (const chunk of text) pushSlot(ctx, textNodeFor(chunk, m.opacity));
+}
+
+function nativeSvgText(ctx: Ctx, m: Measured, mode: RasterMode): SvgTextChunk[] {
+  const { el } = m;
+  if (!(el instanceof SVGSVGElement) || mode !== 'subtree') return [];
+  if (!isIdentity(m.world) || ctx.projected.has(el)) return [];
+  const chunks = ctx.svgText.get(el);
+  if (!chunks) return [];
+  const clip = m.clip;
+  if (clip && chunks.some((c) => !contains(clip, c.rect))) return [];
+  return chunks;
 }
 
 /**

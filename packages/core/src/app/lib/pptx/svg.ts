@@ -1,5 +1,13 @@
-import { type ColorParser, toHex } from './css';
-import type { Rect } from './scene';
+import {
+  applyTextTransform,
+  type ColorParser,
+  isVisibleColor,
+  parsePx,
+  toHex,
+  withAlpha,
+} from './css';
+import { resolveFontFamily } from './fonts';
+import type { Paragraph, Rect, Run, RunStyle, TextNode } from './scene';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -190,4 +198,246 @@ export function buildVectorCompanion(
   } catch {
     return null;
   }
+}
+
+/** The scale of a similarity transform without rotation, skew or flip; null otherwise. */
+export function uniformScale(m: { a: number; b: number; c: number; d: number }): number | null {
+  const eps = 1e-4;
+  if (Math.abs(m.b) > eps || Math.abs(m.c) > eps || m.a <= eps || m.d <= eps) return null;
+  return Math.abs(m.a - m.d) <= eps * Math.max(1, m.a) ? m.a : null;
+}
+
+export function anchorAlign(anchor: string, direction: string): Paragraph['align'] {
+  const rtl = direction === 'rtl';
+  if (anchor === 'middle') return 'ctr';
+  if (anchor === 'end') return rtl ? 'l' : 'r';
+  return rtl ? 'r' : 'l';
+}
+
+export function collapseSvgSpace(text: string): string {
+  return text.replace(/[\n\r\t]/g, ' ').replace(/ {2,}/g, ' ');
+}
+
+export type SvgTextChunk = {
+  rect: Rect;
+  runs: Run[];
+  align: Paragraph['align'];
+  rtl: boolean;
+  sizePx: number;
+};
+
+export function textNodeFor(chunk: SvgTextChunk, opacity: number): TextNode {
+  const runs = chunk.runs.map((run) => ({
+    text: run.text,
+    style: {
+      ...run.style,
+      color: withAlpha(run.style.color, opacity),
+      outline: run.style.outline
+        ? { ...run.style.outline, color: withAlpha(run.style.outline.color, opacity) }
+        : null,
+    },
+  }));
+  const preview = runs
+    .map((r) => r.text)
+    .join('')
+    .trim()
+    .slice(0, 40);
+  return {
+    kind: 'text',
+    name: `Text: ${preview}`,
+    box: chunk.rect,
+    rotationDeg: 0,
+    flipV: false,
+    wrap: false,
+    paragraphs: [
+      {
+        lineSpacingPx: chunk.rect.h,
+        lines: [{ runs, sizePx: chunk.sizePx }],
+        align: chunk.align,
+        rtl: chunk.rtl,
+        bullet: null,
+        marginLeftPx: 0,
+        indentPx: 0,
+        endSizePx: chunk.sizePx,
+      },
+    ],
+  };
+}
+
+function svgRunStyle(
+  cs: CSSStyleDeclaration,
+  scale: number,
+  color: ColorParser,
+  opacity: number,
+): RunStyle | null {
+  const fill = color(cs.fill);
+  if (!fill) return null;
+  const stroke = cs.stroke === 'none' ? null : color(cs.stroke);
+  const strokeWidth = parsePx(cs.strokeWidth) * scale;
+  const fillAlpha = opacity * Number.parseFloat(cs.fillOpacity || '1');
+  const strokeAlpha = opacity * Number.parseFloat(cs.strokeOpacity || '1');
+  return {
+    font: resolveFontFamily(cs.fontFamily),
+    sizePx: parsePx(cs.fontSize) * scale,
+    bold: (Number.parseInt(cs.fontWeight, 10) || 400) >= 600,
+    italic: cs.fontStyle !== 'normal',
+    underline: cs.textDecorationLine.includes('underline'),
+    strike: cs.textDecorationLine.includes('line-through'),
+    color: withAlpha(fill, fillAlpha),
+    letterSpacingPx: cs.letterSpacing === 'normal' ? 0 : parsePx(cs.letterSpacing) * scale,
+    baselineShift: null,
+    shadow: null,
+    outline:
+      stroke && isVisibleColor(stroke) && strokeWidth > 0
+        ? { width: strokeWidth, color: withAlpha(stroke, strokeAlpha) }
+        : null,
+    caps: cs.textTransform.includes('uppercase') ? 'all' : null,
+    kerning: cs.fontKerning !== 'none',
+    link: null,
+    highlight: null,
+  };
+}
+
+function opacityBetween(el: Element, root: SVGSVGElement): number {
+  let opacity = 1;
+  for (let node: Element | null = el; node && node !== root; node = node.parentElement) {
+    opacity *= Number.parseFloat(getComputedStyle(node).opacity);
+  }
+  return opacity;
+}
+
+function hasEffect(el: Element, root: SVGSVGElement): boolean {
+  for (let node: Element | null = el; node && node !== root; node = node.parentElement) {
+    const cs = getComputedStyle(node);
+    if (cs.clipPath !== 'none' || cs.filter !== 'none') return true;
+    const mask = cs.maskImage || (cs as unknown as Record<string, string>).webkitMaskImage;
+    if ((mask && mask !== 'none') || node.hasAttribute('mask')) return true;
+  }
+  return false;
+}
+
+function within(outer: DOMRect, r: DOMRect): boolean {
+  return (
+    r.left >= outer.left - 1 &&
+    r.top >= outer.top - 1 &&
+    r.right <= outer.right + 1 &&
+    r.bottom <= outer.bottom + 1
+  );
+}
+
+/** Each run of text that starts a new position (`<text>`, or a `<tspan>` with x/y/dy). */
+function textChunks(
+  text: SVGTextElement,
+  root: SVGSVGElement,
+  origin: DOMRect,
+  color: ColorParser,
+): SvgTextChunk[] | null {
+  const ctm = text.getScreenCTM();
+  const scale = ctm ? uniformScale(ctm) : null;
+  if (!scale) return null;
+  const cs = getComputedStyle(text);
+  if (cs.writingMode !== 'horizontal-tb') return null;
+  if (text.querySelector('textPath') || hasEffect(text, root)) return null;
+  if (text.hasAttribute('textLength') || text.querySelector('[textLength]')) return null;
+
+  const viewport = root.getBoundingClientRect();
+  const range = document.createRange();
+  const walker = document.createTreeWalker(text, NodeFilter.SHOW_TEXT);
+  const chunks: (SvgTextChunk & { key: Element })[] = [];
+  for (let node = walker.nextNode() as Text | null; node; node = walker.nextNode() as Text | null) {
+    const parent = node.parentElement;
+    if (!parent) continue;
+    const pcs = getComputedStyle(parent);
+    if (pcs.display === 'none' || pcs.visibility === 'hidden') continue;
+    let key: Element = text;
+    for (let el: Element | null = parent; el && el !== text; el = el.parentElement) {
+      if (['x', 'y', 'dy'].some((a) => el?.hasAttribute(a))) {
+        key = el;
+        break;
+      }
+    }
+    const style = svgRunStyle(pcs, scale, color, opacityBetween(parent, root));
+    if (!style) return null;
+    const preserve = /^pre/.test(pcs.whiteSpace) || parent.closest('[xml\\:space="preserve"]');
+    const content = applyTextTransform(
+      preserve ? node.data : collapseSvgSpace(node.data),
+      pcs.textTransform.includes('uppercase') ? 'none' : pcs.textTransform,
+    );
+    range.selectNodeContents(node);
+    const r = range.getBoundingClientRect();
+    let chunk = chunks.at(-1);
+    if (!chunk || chunk.key !== key) {
+      const kcs = key === parent ? pcs : getComputedStyle(key);
+      chunk = {
+        key,
+        rect: { x: 0, y: 0, w: 0, h: 0 },
+        runs: [],
+        align: anchorAlign(kcs.textAnchor, kcs.direction),
+        rtl: kcs.direction === 'rtl',
+        sizePx: style.sizePx,
+      };
+      chunks.push(chunk);
+    }
+    if (r.width > 0.01 && r.height > 0.01) {
+      if (!within(viewport, r)) return null;
+      const rect = { x: r.left - origin.left, y: r.top - origin.top, w: r.width, h: r.height };
+      const prev = chunk.rect;
+      if (prev.w === 0) chunk.rect = rect;
+      else {
+        const x = Math.min(prev.x, rect.x);
+        const y = Math.min(prev.y, rect.y);
+        chunk.rect = {
+          x,
+          y,
+          w: Math.max(prev.x + prev.w, rect.x + rect.w) - x,
+          h: Math.max(prev.y + prev.h, rect.y + rect.h) - y,
+        };
+      }
+    }
+    chunk.sizePx = Math.max(chunk.sizePx, style.sizePx);
+    const last = chunk.runs.at(-1);
+    if (last && JSON.stringify(last.style) === JSON.stringify(style)) last.text += content;
+    else chunk.runs.push({ text: content, style });
+  }
+  return chunks
+    .map(({ key: _, ...chunk }) => {
+      const first = chunk.runs[0];
+      const last = chunk.runs.at(-1);
+      if (first) first.text = first.text.replace(/^ +/, '');
+      if (last) last.text = last.text.replace(/ +$/, '');
+      return { ...chunk, runs: chunk.runs.filter((r) => r.text.length > 0) };
+    })
+    .filter((chunk) => chunk.runs.length > 0 && chunk.rect.w > 0);
+}
+
+/**
+ * Reads every outer SVG's text as it is drawn — before the measurer switches
+ * transforms off — as native text boxes to lay over the graphic. An SVG maps
+ * to null when any of its text cannot be reproduced that way (rotated, on a
+ * path, clipped, stretched, painted with a gradient), so it keeps its text in
+ * the picture.
+ */
+export function snapshotSvgText(
+  frame: HTMLElement,
+  color: ColorParser,
+): Map<SVGSVGElement, SvgTextChunk[] | null> {
+  const out = new Map<SVGSVGElement, SvgTextChunk[] | null>();
+  const origin = frame.getBoundingClientRect();
+  for (const root of Array.from(frame.querySelectorAll('svg'))) {
+    if (root.ownerSVGElement) continue;
+    const texts = Array.from(root.querySelectorAll('text'));
+    if (texts.length === 0) continue;
+    const chunks: SvgTextChunk[] = [];
+    let ok = true;
+    for (const text of texts) {
+      const found = textChunks(text, root, origin, color);
+      if (!found) {
+        ok = false;
+        break;
+      }
+      chunks.push(...found);
+    }
+    out.set(root, ok ? chunks : null);
+  }
+  return out;
 }

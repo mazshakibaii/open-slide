@@ -17,6 +17,8 @@ export type RasterRequest = {
   region: Rect;
   /** Trim transparent margins so the picture box hugs the painted pixels. */
   trim: boolean;
+  /** Leave out SVG text that travels as native text boxes. */
+  hideText?: boolean;
   /** Encode PNG even when opaque: a vector companion needs a PNG fallback. */
   lossless?: boolean;
 };
@@ -90,7 +92,11 @@ export class Rasterizer {
     this.frame.classList.add(ISOLATE_CLASS);
     try {
       for (const batch of batchRequests(live)) {
-        for (const req of batch.requests) req.target.setAttribute(TARGET_ATTR, req.mode);
+        const restoreText: (() => void)[] = [];
+        for (const req of batch.requests) {
+          req.target.setAttribute(TARGET_ATTR, req.mode);
+          if (req.hideText) restoreText.push(hideSvgText(req.target));
+        }
         try {
           const canvas = await this.toCanvas(this.frame, {
             width: CANVAS_WIDTH,
@@ -110,6 +116,7 @@ export class Rasterizer {
           );
         } finally {
           for (const req of batch.requests) req.target.removeAttribute(TARGET_ATTR);
+          for (const restore of restoreText) restore();
         }
       }
     } finally {
@@ -118,6 +125,21 @@ export class Rasterizer {
     }
     return results;
   }
+}
+
+// html-to-image copies an <svg> as markup, without the document's stylesheets,
+// so the text is hidden with inline styles that travel with the copy.
+function hideSvgText(target: Element): () => void {
+  const texts = Array.from(target.querySelectorAll('text'));
+  const saved = texts.map((t) => t.getAttribute('style'));
+  for (const t of texts) (t as SVGElement).style.setProperty('visibility', 'hidden', 'important');
+  return () => {
+    texts.forEach((t, i) => {
+      const style = saved[i];
+      if (style === null) t.removeAttribute('style');
+      else t.setAttribute('style', style);
+    });
+  };
 }
 
 async function crop(

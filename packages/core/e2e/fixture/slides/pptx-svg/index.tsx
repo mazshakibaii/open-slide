@@ -56,4 +56,27 @@ const Icons: Page = () => (
   </div>
 );
 
-export default [Icons] satisfies Page[];
+const Diagram: Page = () => (
+  <div style={page}>
+    <svg id="diagram" style={at(80, 80)} width="600" height="240" viewBox="0 0 300 120">
+      <rect x="0" y="0" width="300" height="120" fill="#e0f2fe" />
+      <text x="10" y="40" fontSize="20" fill="#111111">
+        Diagram label in <tspan fontWeight="700">SVG</tspan> text
+      </text>
+      <text x="150" y="70" fontSize="16" fill="#0369a1" textAnchor="middle">
+        Centred caption
+        <tspan x="150" dy="20">
+          second line
+        </tspan>
+      </text>
+    </svg>
+    <svg id="rotated" style={at(80, 500)} width="300" height="200" viewBox="0 0 300 200">
+      <rect width="300" height="200" fill="#fef3c7" />
+      <text x="40" y="120" fontSize="24" fill="#111111" transform="rotate(-20 150 100)">
+        Tilted words
+      </text>
+    </svg>
+  </div>
+);
+
+export default [Icons, Diagram] satisfies Page[];

@@ -65,3 +65,78 @@ test('keeps an opaque SVG vector rather than flattening it to a JPEG', () => {
   expect(badge).toBeDefined();
   expect(companionOf(1, badge as string)).toContain('<circle');
 });
+
+const EMU_PER_PX = 6350;
+
+function shapes(xml: string): string[] {
+  return Array.from(xml.matchAll(/<p:(sp|pic)>.*?<\/p:\1>/gs), (m) => m[0]);
+}
+
+function box(shape: string): { x: number; y: number; w: number; h: number } {
+  const m = /<a:off x="(-?\d+)" y="(-?\d+)"\/><a:ext cx="(\d+)" cy="(\d+)"\/>/.exec(shape);
+  if (!m) throw new Error('shape has no geometry');
+  const [x, y, w, h] = m.slice(1).map((v) => Math.round(Number(v) / EMU_PER_PX));
+  return { x, y, w, h };
+}
+
+function textOf(shape: string): string {
+  return Array.from(shape.matchAll(/<a:t>([^<]*)<\/a:t>/g), (m) => m[1]).join('');
+}
+
+test('exports SVG text as text boxes over the graphic, scaled with the viewBox', () => {
+  const xml = slide(2);
+  const label = shapes(xml).find((s) => textOf(s) === 'Diagram label in SVG text');
+  expect(label).toBeDefined();
+  expect(label).toContain('<a:bodyPr wrap="none"');
+  expect(label).toContain('sz="2000"');
+  expect(label).toMatch(/b="1"[^>]*>(?:(?!<\/a:r>).)*<a:t>SVG<\/a:t>/);
+  const b = box(label as string);
+  expect(b.x).toBeGreaterThanOrEqual(95);
+  expect(b.x).toBeLessThanOrEqual(110);
+
+  const caption = shapes(xml).find((s) => textOf(s) === 'Centred caption');
+  expect(caption).toContain('algn="ctr"');
+  expect(shapes(xml).some((s) => textOf(s) === 'second line')).toBe(true);
+});
+
+test('keeps the diagram graphic, vector and without its text', () => {
+  const xml = slide(2);
+  const graphic = pictures(xml).find((p) => {
+    const b = box(p);
+    return b.x <= 82 && b.y <= 82 && b.w >= 590;
+  });
+  expect(graphic).toBeDefined();
+  const svg = companionOf(2, graphic as string);
+  expect(svg).not.toContain('<text');
+  expect(svg).toContain('<rect');
+});
+
+test('leaves transformed SVG text in the picture', () => {
+  const xml = slide(2);
+  expect(xml).not.toContain('<a:t>Tilted words</a:t>');
+  expect(pictures(xml).some((p) => box(p).y >= 495 && box(p).y <= 510)).toBe(true);
+});
+
+test('leaves the diagram text out of its fallback picture', async ({ page }) => {
+  const xml = slide(2);
+  const graphic = pictures(xml).find((p) => box(p).x <= 82 && box(p).w >= 590) as string;
+  const rId = /<a:blip r:embed="(rId\d+)"/.exec(graphic)?.[1];
+  const rels = strFromU8(parts['ppt/slides/_rels/slide2.xml.rels']);
+  const target = new RegExp(`Id="${rId}"[^>]*Target="\\.\\./media/([^"]+)"`).exec(rels)?.[1];
+  const png = Buffer.from(parts[`ppt/media/${target}`]).toString('base64');
+  const inked = await page.evaluate(async (b64) => {
+    const img = new Image();
+    img.src = `data:image/png;base64,${b64}`;
+    await img.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
+    ctx.drawImage(img, 0, 0);
+    const data = ctx.getImageData(0, 0, img.width, img.height).data;
+    let count = 0;
+    for (let i = 0; i < data.length; i += 4) if (data[i + 3] > 0 && data[i] < 150) count++;
+    return count;
+  }, png);
+  expect(inked).toBe(0);
+});
