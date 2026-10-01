@@ -56,15 +56,39 @@ function loadImageElement(url: string): Promise<HTMLImageElement | null> {
 
 const SVG_RASTER_SCALE = 2;
 
+function fnv1a(bytes: Uint8Array, seed = 0x811c9dc5): number {
+  let h = seed;
+  for (let i = 0; i < bytes.length; i++) {
+    h ^= bytes[i];
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+function sameBytes(a: Uint8Array | undefined, b: Uint8Array | undefined): boolean {
+  if (!a || !b) return a === b;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
 export class ImageStore {
   readonly images: SceneImage[] = [];
   private readonly byKey = new Map<string, Promise<LoadedImage | null>>();
+  private readonly byContent = new Map<string, SceneImage[]>();
   private nextId = 1;
 
+  /** Identical bytes (the same overlay rasterised on every page) are stored once. */
   add(bytes: Uint8Array, format: ImageFormat, svg?: Uint8Array): number {
-    const id = this.nextId++;
-    this.images.push({ id, bytes, format, svg });
-    return id;
+    const key = `${format}:${bytes.length}:${fnv1a(bytes)}:${svg ? fnv1a(svg) : ''}`;
+    const candidates = this.byContent.get(key) ?? [];
+    const existing = candidates.find((c) => sameBytes(c.bytes, bytes) && sameBytes(c.svg, svg));
+    if (existing) return existing.id;
+    const image: SceneImage = { id: this.nextId++, bytes, format, svg };
+    this.images.push(image);
+    candidates.push(image);
+    this.byContent.set(key, candidates);
+    return image.id;
   }
 
   fromUrl(url: string): Promise<LoadedImage | null> {
