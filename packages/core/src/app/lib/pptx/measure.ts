@@ -44,6 +44,7 @@ import {
 } from './raster';
 import type {
   Bullet,
+  CellBorder,
   Crop,
   Fill,
   Geometry,
@@ -57,6 +58,8 @@ import type {
   ShadowEffect,
   ShapeNode,
   SlideScene,
+  TableCell,
+  TableNode,
   TextNode,
   TextShadow,
 } from './scene';
@@ -471,10 +474,12 @@ function paintBlock(ctx: Ctx, el: Element, inherited: Inherited): void {
     return;
   }
 
+  const table = tag === 'TABLE' ? nativeTable(ctx, m, el as HTMLTableElement, inherited) : null;
   if (paintsBackgroundSeparately(cs, m.rect.w, m.rect.h, ctx.color)) {
     requestRaster(ctx, m, 'self');
   } else {
-    paintBox(ctx, m);
+    // Collapsed table borders are resolved onto the cells that share them.
+    paintBox(ctx, m, !table?.collapsed);
   }
 
   const stacking = createsStackingContext(ctx, el, cs);
@@ -487,6 +492,14 @@ function paintBlock(ctx: Ctx, el: Element, inherited: Inherited): void {
     highlight: null,
     layer: stacking ? { index: ctx.slots.length, items: [] } : inherited.layer,
   };
+
+  if (table) {
+    for (const item of table.under) paintBox(ctx, item);
+    pushSlot(ctx, table.node);
+    paintChildren(ctx, table.captions, childInherited);
+    if (stacking) flushLayer(ctx, childInherited.layer);
+    return;
+  }
 
   const flow = newFlow();
   const blockChildren: Element[] = [];
@@ -801,21 +814,21 @@ function shapeName(el: Element, geometry: Geometry): string {
   return `${base}${id}`;
 }
 
-function paintBox(ctx: Ctx, m: Measured): void {
+function paintBox(ctx: Ctx, m: Measured, borders = true): void {
   const { cs, el } = m;
   const rects = isInlineDisplay(cs.display)
     ? Array.from(el.getClientRects()).map((r) => rel(ctx, r))
     : [m.rect];
   for (const rect of rects) {
     if (rect.w < MIN_SIZE && rect.h < MIN_SIZE) continue;
-    paintBoxRect(ctx, m, rect);
+    paintBoxRect(ctx, m, rect, borders);
   }
 }
 
-function paintBoxRect(ctx: Ctx, m: Measured, rect: Rect): void {
+function paintBoxRect(ctx: Ctx, m: Measured, rect: Rect, borders = true): void {
   const { cs, el, world, opacity } = m;
   const bg = ctx.color(cs.backgroundColor);
-  const sides = borderSides(cs, ctx.color);
+  const sides = borderSides(cs, ctx.color).map((s) => (borders ? s : { ...s, visible: false }));
   const shadows = parseShadows(cs.boxShadow, ctx.color);
   const outer = dominantShadow(shadows, false);
   const inner = dominantShadow(shadows, true);
@@ -1706,4 +1719,318 @@ function plainListItems(
     }
   }
   return out;
+}
+
+type NativeTable = {
+  node: TableNode;
+  /** Inline boxes (code chips) inside unfilled cells, drawn beneath the table. */
+  under: Measured[];
+  captions: Element[];
+  collapsed: boolean;
+};
+
+type PlacedCell = {
+  el: Element;
+  m: Measured;
+  row: number;
+  col: number;
+  rowSpan: number;
+  colSpan: number;
+  cell: TableCell;
+};
+
+const TABLE_PARTS = new Set(['THEAD', 'TBODY', 'TFOOT', 'TR', 'CAPTION', 'COLGROUP', 'COL']);
+
+function plainLayer(ctx: Ctx, el: Element): CSSStyleDeclaration | null {
+  const cs = getComputedStyle(el);
+  if (cs.backgroundImage !== 'none' || Number.parseFloat(cs.opacity) < 1) return null;
+  if (ctx.projected.has(el) || !isIdentity(ctx.transforms.get(el) ?? IDENTITY)) return null;
+  return cs;
+}
+
+function cellBorder(side: BorderSide, opacity: number): CellBorder {
+  if (!side.visible || !side.color) return null;
+  return {
+    width: side.width,
+    color: withAlpha(side.color, opacity),
+    dash: side.style === 'dashed' ? 'dash' : side.style === 'dotted' ? 'dot' : 'solid',
+  };
+}
+
+/** In the collapsed model a shared edge shows the widest of the borders that meet on it. */
+function widest(candidates: (BorderSide | undefined)[]): BorderSide | undefined {
+  let best: BorderSide | undefined;
+  for (const c of candidates) {
+    if (!c?.visible) continue;
+    if (!best || c.width > best.width) best = c;
+  }
+  return best;
+}
+
+/**
+ * A table whose cells hold inline content becomes a PowerPoint table, so it
+ * stays a table to edit: rows and columns from the browser's grid, spans as
+ * merges, and each cell's fill, borders, padding and text. Anything a table
+ * cell cannot hold keeps the per-box export.
+ */
+function nativeTable(
+  ctx: Ctx,
+  m: Measured,
+  table: HTMLTableElement,
+  inherited: Inherited,
+): NativeTable | null {
+  if (!isIdentity(m.world)) return null;
+  if (m.clip && !contains(m.clip, m.rect)) return null;
+  const captions: Element[] = [];
+  for (const child of Array.from(table.children)) {
+    if (!TABLE_PARTS.has(child.tagName.toUpperCase())) return null;
+    if (child.tagName.toUpperCase() === 'CAPTION') captions.push(child);
+  }
+  const collapsed = m.cs.borderCollapse === 'collapse';
+  const base: Inherited = {
+    ...inherited,
+    world: m.world,
+    opacity: m.opacity,
+    clip: m.clip,
+    decoration: mergeDecoration(inherited.decoration, m.cs),
+    link: linkOf(table) ?? inherited.link,
+    highlight: null,
+  };
+  const tableBg = ctx.color(m.cs.backgroundColor);
+  const tableSides = borderSides(m.cs, ctx.color);
+
+  const placed: PlacedCell[] = [];
+  const grid: (PlacedCell | undefined)[][] = [];
+  const rowEls: Element[] = [];
+  const under: Measured[] = [];
+  for (const tr of Array.from(table.rows)) {
+    const rcs = plainLayer(ctx, tr);
+    if (!rcs) return null;
+    if (rcs.display === 'none') continue;
+    if (rcs.display !== 'table-row' || rcs.visibility !== 'visible') return null;
+    const section = tr.parentElement && tr.parentElement !== table ? tr.parentElement : null;
+    const scs = section ? plainLayer(ctx, section) : null;
+    if (section && !scs) return null;
+    const r = rowEls.length;
+    rowEls.push(tr);
+    grid[r] ??= [];
+    let col = 0;
+    for (const td of Array.from(tr.cells)) {
+      const ccs = getComputedStyle(td);
+      if (ccs.display === 'none') continue;
+      if (ccs.display !== 'table-cell' || isHidden(ccs) || td.rowSpan === 0) return null;
+      if (!plainLayer(ctx, td) || paintsBackgroundSeparately(ccs, 1, 1, ctx.color)) return null;
+      if (parseShadows(ccs.boxShadow, ctx.color).length > 0) return null;
+      const cm = measureElement(ctx, td, ccs, base);
+      if (!cm || needsSubtreeRaster(ctx, cm)) return null;
+      if (hasRadius(radiiOf(ccs, cm.rect.w, cm.rect.h))) return null;
+
+      const flow = newFlow();
+      const blocks: Element[] = [];
+      const inlineItems: Measured[] = [];
+      collectInline(
+        ctx,
+        td,
+        {
+          ...base,
+          opacity: cm.opacity,
+          clip: cm.clip,
+          decoration: mergeDecoration(base.decoration, ccs),
+          link: linkOf(td) ?? base.link,
+        },
+        flow,
+        blocks,
+        inlineItems,
+      );
+      if (blocks.length > 0) return null;
+      const block = textBlock(ctx, cm, flow, null, 0);
+
+      const own = [ccs, rcs, scs]
+        .map((s) => (s ? ctx.color(s.backgroundColor) : null))
+        .find((c): c is Rgba => isVisibleColor(c));
+      // Chips in a cell are drawn beneath the table, so only the table's own
+      // background (already painted behind it) may show around them.
+      if (inlineItems.length > 0 && own) return null;
+      const fill = own ?? (inlineItems.length > 0 ? null : tableBg);
+      const fillColor = isVisibleColor(fill) ? withAlpha(fill, cm.opacity) : null;
+      under.push(...inlineItems);
+
+      while (grid[r][col]) col++;
+      const content = contentBox(cm);
+      const entry: PlacedCell = {
+        el: td,
+        m: cm,
+        row: r,
+        col,
+        rowSpan: Math.max(1, td.rowSpan),
+        colSpan: Math.max(1, td.colSpan),
+        cell: {
+          merge: null,
+          gridSpan: Math.max(1, td.colSpan),
+          rowSpan: Math.max(1, td.rowSpan),
+          paragraphs: block?.paragraphs ?? [],
+          fill: fillColor,
+          borders: { l: null, r: null, t: null, b: null },
+          margins: {
+            l: Math.max(0, content.x - cm.rect.x),
+            r: Math.max(0, cm.rect.x + cm.rect.w - (content.x + content.w)),
+            t: Math.max(0, content.y - cm.rect.y),
+            b: Math.max(0, cm.rect.y + cm.rect.h - (content.y + content.h)),
+          },
+          anchor:
+            ccs.verticalAlign === 'middle' ? 'ctr' : ccs.verticalAlign === 'bottom' ? 'b' : 't',
+        },
+      };
+      placed.push(entry);
+      for (let dr = 0; dr < entry.rowSpan; dr++) {
+        grid[r + dr] ??= [];
+        for (let dc = 0; dc < entry.colSpan; dc++) grid[r + dr][col + dc] = entry;
+      }
+      col += entry.colSpan;
+    }
+  }
+  if (placed.length === 0) return null;
+  const rowCount = Math.max(rowEls.length, ...placed.map((p) => p.row + p.rowSpan));
+  const colCount = Math.max(...placed.map((p) => p.col + p.colSpan));
+  if (rowCount > rowEls.length) return null;
+
+  const colLeft: number[] = [];
+  const rowTop: number[] = [];
+  for (const p of placed) {
+    colLeft[p.col] = Math.min(colLeft[p.col] ?? Number.POSITIVE_INFINITY, p.m.rect.x);
+    rowTop[p.row] = Math.min(rowTop[p.row] ?? Number.POSITIVE_INFINITY, p.m.rect.y);
+  }
+  rowEls.forEach((tr, r) => {
+    rowTop[r] ??= rel(ctx, tr.getBoundingClientRect()).y;
+  });
+  const right = Math.max(...placed.map((p) => p.m.rect.x + p.m.rect.w));
+  const bottom = Math.max(...placed.map((p) => p.m.rect.y + p.m.rect.h));
+  const columns: number[] = [];
+  for (let c = 0; c < colCount; c++) {
+    const next = c + 1 < colCount ? colLeft[c + 1] : right;
+    if (colLeft[c] === undefined || next === undefined || next - colLeft[c] <= 0) return null;
+    columns.push(next - colLeft[c]);
+  }
+  const heights: number[] = [];
+  for (let r = 0; r < rowCount; r++) {
+    const next = r + 1 < rowCount ? rowTop[r + 1] : bottom;
+    if (next - rowTop[r] <= 0) return null;
+    heights.push(next - rowTop[r]);
+  }
+
+  const sidesOf = new Map(placed.map((p) => [p, borderSides(p.m.cs, ctx.color)]));
+  const rowSides = rowEls.map((tr) => borderSides(getComputedStyle(tr), ctx.color));
+  for (const p of placed) {
+    const [t, r, b, l] = sidesOf.get(p) as BorderSide[];
+    if (!collapsed) {
+      p.cell.borders = {
+        t: cellBorder(t, p.m.opacity),
+        r: cellBorder(r, p.m.opacity),
+        b: cellBorder(b, p.m.opacity),
+        l: cellBorder(l, p.m.opacity),
+      };
+      continue;
+    }
+    // A collapsed border straddles the grid line, so half of it sits in the cell.
+    const { cs } = p.m;
+    const lastRow = p.row + p.rowSpan - 1;
+    const lastCol = p.col + p.colSpan - 1;
+    const neighbour = (row: number, col: number, side: number) => {
+      const other = grid[row]?.[col];
+      return other && other !== p ? (sidesOf.get(other) as BorderSide[])[side] : undefined;
+    };
+    p.cell.borders = {
+      t: cellBorder(
+        widest([
+          t,
+          neighbour(p.row - 1, p.col, 2),
+          rowSides[p.row][0],
+          p.row === 0 ? tableSides[0] : undefined,
+        ]) ?? t,
+        p.m.opacity,
+      ),
+      r: cellBorder(
+        widest([
+          r,
+          neighbour(p.row, lastCol + 1, 3),
+          lastCol === colCount - 1 ? tableSides[1] : undefined,
+        ]) ?? r,
+        p.m.opacity,
+      ),
+      b: cellBorder(
+        widest([
+          b,
+          neighbour(lastRow + 1, p.col, 0),
+          rowSides[lastRow][2],
+          lastRow === rowCount - 1 ? tableSides[2] : undefined,
+        ]) ?? b,
+        p.m.opacity,
+      ),
+      l: cellBorder(
+        widest([l, neighbour(p.row, p.col - 1, 1), p.col === 0 ? tableSides[3] : undefined]) ?? l,
+        p.m.opacity,
+      ),
+    };
+    const half = (border: CellBorder) => (border?.width ?? 0) / 2;
+    p.cell.margins = {
+      l: parsePx(cs.paddingLeft) + half(p.cell.borders.l),
+      r: parsePx(cs.paddingRight) + half(p.cell.borders.r),
+      t: parsePx(cs.paddingTop) + half(p.cell.borders.t),
+      b: parsePx(cs.paddingBottom) + half(p.cell.borders.b),
+    };
+  }
+
+  const empty = (): TableCell => ({
+    merge: null,
+    gridSpan: 1,
+    rowSpan: 1,
+    paragraphs: [],
+    fill: null,
+    borders: { l: null, r: null, t: null, b: null },
+    margins: { l: 0, r: 0, t: 0, b: 0 },
+    anchor: 't',
+  });
+  const rows = heights.map((height, r) => ({
+    height,
+    cells: columns.map((_, c): TableCell => {
+      const p = grid[r]?.[c];
+      if (!p) return empty();
+      if (p.row === r && p.col === c) return p.cell;
+      const { borders } = p.cell;
+      return {
+        ...p.cell,
+        // PowerPoint repeats the span on the cells under a cell merged both ways.
+        gridSpan: r > p.row && c === p.col ? p.colSpan : 1,
+        rowSpan: 1,
+        merge: { h: c > p.col, v: r > p.row },
+        paragraphs: [],
+        borders: {
+          l: c === p.col ? borders.l : null,
+          r: c === p.col + p.colSpan - 1 ? borders.r : null,
+          t: r === p.row ? borders.t : null,
+          b: r === p.row + p.rowSpan - 1 ? borders.b : null,
+        },
+      };
+    }),
+  }));
+
+  return {
+    node: {
+      kind: 'table',
+      name: table.id ? `Table #${table.id}` : 'Table',
+      box: {
+        x: colLeft[0],
+        y: rowTop[0],
+        w: columns.reduce((a, w) => a + w, 0),
+        h: heights.reduce((a, h) => a + h, 0),
+      },
+      rotationDeg: 0,
+      flipV: false,
+      columns,
+      rows,
+    },
+    under,
+    captions,
+    collapsed,
+  };
 }

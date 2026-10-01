@@ -17,6 +17,8 @@ import type {
   ShadowEffect,
   ShapeNode,
   SlideScene,
+  TableCell,
+  TableNode,
   TextNode,
 } from './scene';
 import { degrees, percent, px, pxToHundredthsPt, SLIDE_EMU_H, SLIDE_EMU_W } from './units';
@@ -28,6 +30,7 @@ const NS_A = 'http://schemas.openxmlformats.org/drawingml/2006/main';
 const NS_P = 'http://schemas.openxmlformats.org/presentationml/2006/main';
 const NS_SVG = 'http://schemas.microsoft.com/office/drawing/2016/SVG/main';
 const SVG_BLIP_URI = '{96DAC541-7B7A-43D3-8B79-37D633B846F1}';
+const TABLE_URI = 'http://schemas.openxmlformats.org/drawingml/2006/table';
 const NS_HLINK_COLOR = 'http://schemas.microsoft.com/office/drawing/2018/hyperlinkcolor';
 const HLINK_COLOR_URI = '{A12FA001-AC4F-418D-AE19-62706E023703}';
 const CT_PREFIX = 'application/vnd.openxmlformats-officedocument.presentationml';
@@ -333,6 +336,9 @@ export function slideXml(
 function hasFiniteGeometry(node: SceneNode): boolean {
   const { x, y, w, h } = node.box;
   if (![x, y, w, h, node.rotationDeg].every(Number.isFinite)) return false;
+  if (node.kind === 'table') {
+    return [...node.columns, ...node.rows.map((r) => r.height)].every(Number.isFinite);
+  }
   if (node.kind !== 'picture' || !node.crop) return true;
   const { l, t, r, b } = node.crop;
   return [l, t, r, b].every(Number.isFinite);
@@ -352,6 +358,8 @@ function nodeXml(node: SceneNode, ctx: EmitContext): string {
       return pictureXml(node, ctx);
     case 'text':
       return textXml(node, ctx);
+    case 'table':
+      return tableXml(node, ctx);
   }
 }
 
@@ -394,6 +402,47 @@ function textXml(node: TextNode, ctx: EmitContext): string {
   const id = ctx.nextId++;
   const paragraphs = node.paragraphs.map((p) => paragraphXml(p, ctx)).join('');
   return `<p:sp><p:nvSpPr>${nvPr(id, node.name)}<p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr>${xfrmXml(node)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr><p:txBody><a:bodyPr wrap="${node.wrap ? 'square' : 'none'}" lIns="0" tIns="0" rIns="0" bIns="0" rtlCol="0" anchor="t"><a:spAutoFit/></a:bodyPr><a:lstStyle/>${paragraphs}</p:txBody></p:sp>`;
+}
+
+function tableXml(node: TableNode, ctx: EmitContext): string {
+  const id = ctx.nextId++;
+  const columns = node.columns.map((w) => Math.max(0, px(w)));
+  const heights = node.rows.map((r) => Math.max(0, px(r.height)));
+  const sum = (values: number[]) => values.reduce((a, b) => a + b, 0);
+  const grid = columns.map((w) => `<a:gridCol w="${w}"/>`).join('');
+  const rows = node.rows
+    .map(
+      (row, i) =>
+        `<a:tr h="${heights[i]}">${row.cells.map((c) => cellXml(c, ctx)).join('')}</a:tr>`,
+    )
+    .join('');
+  return `<p:graphicFrame><p:nvGraphicFramePr>${nvPr(id, node.name)}<p:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/></p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr><p:xfrm><a:off x="${px(node.box.x)}" y="${px(node.box.y)}"/><a:ext cx="${sum(columns)}" cy="${sum(heights)}"/></p:xfrm><a:graphic><a:graphicData uri="${TABLE_URI}"><a:tbl><a:tblPr/><a:tblGrid>${grid}</a:tblGrid>${rows}</a:tbl></a:graphicData></a:graphic></p:graphicFrame>`;
+}
+
+function cellXml(cell: TableCell, ctx: EmitContext): string {
+  const attrs = [
+    cell.gridSpan > 1 ? ` gridSpan="${cell.gridSpan}"` : '',
+    cell.rowSpan > 1 ? ` rowSpan="${cell.rowSpan}"` : '',
+    cell.merge?.h ? ' hMerge="1"' : '',
+    cell.merge?.v ? ' vMerge="1"' : '',
+  ].join('');
+  const paragraphs =
+    cell.paragraphs.length > 0
+      ? cell.paragraphs.map((p) => paragraphXml(p, ctx)).join('')
+      : '<a:p><a:endParaRPr lang="en-US" dirty="0"/></a:p>';
+  const { l, r, t, b } = cell.margins;
+  const margins = `marL="${px(l)}" marR="${px(r)}" marT="${px(t)}" marB="${px(b)}"`;
+  const borders = (['L', 'R', 'T', 'B'] as const)
+    .map((side) => cellBorderXml(side, cell.borders[side.toLowerCase() as 'l' | 'r' | 't' | 'b']))
+    .join('');
+  const fill = cell.fill ? `<a:solidFill>${colorXml(cell.fill)}</a:solidFill>` : '<a:noFill/>';
+  return `<a:tc${attrs}><a:txBody><a:bodyPr/><a:lstStyle/>${paragraphs}</a:txBody><a:tcPr ${margins} anchor="${cell.anchor}">${borders}${fill}</a:tcPr></a:tc>`;
+}
+
+function cellBorderXml(side: 'L' | 'R' | 'T' | 'B', border: TableCell['borders']['l']): string {
+  if (!border) return `<a:ln${side}><a:noFill/></a:ln${side}>`;
+  const dash = border.dash === 'solid' ? '' : `<a:prstDash val="${border.dash}"/>`;
+  return `<a:ln${side} w="${Math.max(0, px(border.width))}" cap="flat" cmpd="sng" algn="ctr"><a:solidFill>${colorXml(border.color)}</a:solidFill>${dash}</a:ln${side}>`;
 }
 
 function paragraphXml(p: Paragraph, ctx: EmitContext): string {
