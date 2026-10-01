@@ -67,6 +67,7 @@ import type {
   TextNode,
   TextShadow,
 } from './scene';
+import { buildVectorCompanion, type SvgTextChunk, snapshotSvgText, textNodeFor } from './svg';
 import { type Atom, buildSegments, groupIntoLines } from './text-lines';
 
 const MEASURE_CLASS = 'os-pptx-measure';
@@ -129,6 +130,8 @@ type Ctx = {
   transforms: Map<Element, Mat>;
   /** Painted bounds of elements whose transform has no 2D equivalent (3D, z-axis rotation). */
   projected: Map<Element, DOMRect>;
+  /** SVG text read before transforms are switched off; null where it must stay in the picture. */
+  svgText: Map<SVGSVGElement, SvgTextChunk[] | null>;
   slots: Slot[];
   rasters: { slot: Slot; request: RasterRequest; svg: Uint8Array | null }[];
   pending: Promise<void>[];
@@ -161,6 +164,7 @@ async function measureMaterialized(options: MeasurePageOptions): Promise<SlideSc
     frame,
     frameRect: frame.getBoundingClientRect(),
     ...snapshotTransforms(frame),
+    svgText: snapshotSvgText(frame, options.color),
     slots: [],
     rasters: [],
     pending: [],
@@ -507,7 +511,8 @@ function requestRaster(ctx: Ctx, m: Measured, mode: RasterMode, vector = true): 
     0,
   );
   const bounds = transformedBounds(m.world, m.rect.x, m.rect.y, m.rect.w, m.rect.h);
-  const svg = vector ? vectorCompanion(m) : null;
+  const text = nativeSvgText(ctx, m, mode);
+  const svg = vector ? vectorCompanion(ctx, m, text.length > 0) : null;
   const bleed = svg ? 0 : 3 * parseBlurPx(m.cs.filter) + shadowExtent + 8;
   let region = clampToSlide(expandRect(bounds, bleed));
   if (m.clip && isIdentity(m.world) && mode === 'self') {
@@ -515,54 +520,45 @@ function requestRaster(ctx: Ctx, m: Measured, mode: RasterMode, vector = true): 
   }
   if (region.w <= 0 || region.h <= 0) return;
   const slot = pushSlot(ctx, null);
-  ctx.rasters.push({ slot, request: { target: m.el, mode, region, trim: !svg }, svg });
+  const hideText = text.length > 0;
+  ctx.rasters.push({
+    slot,
+    request: { target: m.el, mode, region, trim: !svg, hideText, lossless: !!svg },
+    svg,
+  });
+  for (const chunk of text) pushSlot(ctx, textNodeFor(chunk, m.opacity));
 }
 
-const SVG_UNSUPPORTED =
-  'filter, pattern, mask, foreignObject, use, style, image, text, textPath, switch, script, [class]';
-const SVG_PAINT_PROPS = ['fill', 'stroke', 'stop-color', 'flood-color', 'lighting-color'] as const;
+function nativeSvgText(ctx: Ctx, m: Measured, mode: RasterMode): SvgTextChunk[] {
+  const { el } = m;
+  if (!(el instanceof SVGSVGElement) || mode !== 'subtree') return [];
+  if (!isIdentity(m.world) || ctx.projected.has(el)) return [];
+  const chunks = ctx.svgText.get(el);
+  if (!chunks) return [];
+  const clip = m.clip;
+  if (clip && chunks.some((c) => !contains(clip, c.rect))) return [];
+  return chunks;
+}
 
 /**
  * PowerPoint 2016+ renders an SVG companion instead of the PNG fallback, keeping
  * icons and diagrams vector and editable. Only plain, fully inside-the-slide,
  * untransformed SVGs qualify: anything else would draw differently from the raster.
  */
-function vectorCompanion(m: Measured): Uint8Array | null {
+function vectorCompanion(ctx: Ctx, m: Measured, dropText = false): Uint8Array | null {
   const { el, rect, world, opacity } = m;
   if (!(el instanceof SVGSVGElement)) return null;
   if (!isIdentity(world) || opacity < 0.999) return null;
   if (rect.x < 0 || rect.y < 0 || rect.x + rect.w > CANVAS_WIDTH || rect.y + rect.h > CANVAS_HEIGHT)
     return null;
   if (rect.w < 1 || rect.h < 1) return null;
-  if (el.hasAttribute('class') || el.querySelector(SVG_UNSUPPORTED)) return null;
-  const origs = [el, ...Array.from(el.querySelectorAll('*'))];
-  const clone = el.cloneNode(true) as SVGSVGElement;
-  const clones = [clone, ...Array.from(clone.querySelectorAll('*'))];
-  if (origs.length !== clones.length) return null;
-  for (let i = 0; i < origs.length; i++) {
-    const orig = origs[i];
-    const target = clones[i];
-    if (/currentcolor|var\(/i.test(orig.getAttribute('style') ?? '')) return null;
-    const cs = getComputedStyle(orig);
-    for (const prop of SVG_PAINT_PROPS) {
-      const attr = orig.getAttribute(prop) ?? '';
-      if (!/currentcolor|var\(/i.test(attr)) continue;
-      const resolved = cs.getPropertyValue(prop);
-      if (!resolved) return null;
-      target.setAttribute(prop, resolved);
-    }
-  }
-  clone.removeAttribute('style');
-  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-  clone.setAttribute('width', String(rect.w));
-  clone.setAttribute('height', String(rect.h));
-  if (!clone.getAttribute('viewBox')) clone.setAttribute('viewBox', `0 0 ${rect.w} ${rect.h}`);
-  clone.setAttribute('color', getComputedStyle(el).color);
-  try {
-    return new TextEncoder().encode(new XMLSerializer().serializeToString(clone));
-  } catch {
-    return null;
-  }
+  return buildVectorCompanion(el, rect, {
+    color: ctx.color,
+    dropText,
+    cssTransformed: (node) =>
+      ctx.projected.has(node) ||
+      (!node.hasAttribute('transform') && !isIdentity(ctx.transforms.get(node) ?? IDENTITY)),
+  });
 }
 
 function paintBlock(ctx: Ctx, el: Element, inherited: Inherited): void {

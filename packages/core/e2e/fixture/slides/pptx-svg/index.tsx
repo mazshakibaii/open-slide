@@ -1,0 +1,82 @@
+import type { Page, SlideMeta } from '@open-slide/core';
+
+export const meta: SlideMeta = {
+  title: 'PPTX SVG',
+  createdAt: '2026-01-02T15:00:00.000Z',
+};
+
+const page = {
+  position: 'relative',
+  width: 1920,
+  height: 1080,
+  background: '#ffffff',
+  color: '#2563eb',
+  fontFamily: 'system-ui, sans-serif',
+  fontSize: 28,
+} as const;
+
+const at = (left: number, top: number) => ({ position: 'absolute' as const, left, top });
+
+const css = `
+.pptx-svg .lucide { stroke-width: 3; }
+.pptx-svg .accent { fill: #f59e0b; }
+`;
+
+const Icons: Page = () => (
+  <div className="pptx-svg" style={page}>
+    <style>{css}</style>
+    <svg
+      id="classed-icon"
+      className="lucide lucide-check"
+      style={at(80, 80)}
+      width="96"
+      height="96"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-label="Check"
+    >
+      <path d="M20 6 9 17l-5-5" />
+    </svg>
+    <svg id="reused" style={at(260, 80)} width="200" height="96" viewBox="0 0 200 96">
+      <defs>
+        <circle id="dot" cx="24" cy="48" r="20" fill="#16a34a" />
+      </defs>
+      <use href="#dot" />
+      <use href="#dot" x="60" />
+      <rect className="accent" x="130" y="28" width="40" height="40" />
+    </svg>
+    <svg style={at(520, 80)} width="120" height="96" viewBox="0 0 120 96" aria-label="Opaque badge">
+      <rect width="120" height="96" fill="#1e293b" />
+      <circle cx="60" cy="48" r="30" fill="#38bdf8" />
+    </svg>
+  </div>
+);
+
+const Diagram: Page = () => (
+  <div style={page}>
+    <svg id="diagram" style={at(80, 80)} width="600" height="240" viewBox="0 0 300 120">
+      <rect x="0" y="0" width="300" height="120" fill="#e0f2fe" />
+      <text x="10" y="40" fontSize="20" fill="#111111">
+        Diagram label in <tspan fontWeight="700">SVG</tspan> text
+      </text>
+      <text x="150" y="70" fontSize="16" fill="#0369a1" textAnchor="middle">
+        Centred caption
+        <tspan x="150" dy="20">
+          second line
+        </tspan>
+      </text>
+    </svg>
+    <svg id="rotated" style={at(80, 500)} width="300" height="200" viewBox="0 0 300 200">
+      <rect width="300" height="200" fill="#fef3c7" />
+      <text x="40" y="120" fontSize="24" fill="#111111" transform="rotate(-20 150 100)">
+        Tilted words
+      </text>
+    </svg>
+  </div>
+);
+
+export default [Icons, Diagram] satisfies Page[];
