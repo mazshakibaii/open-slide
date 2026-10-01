@@ -1,5 +1,6 @@
 import { CANVAS_HEIGHT, CANVAS_WIDTH } from '../sdk';
 import {
+  analyzeFilter,
   applyTextTransform,
   applyToPoint,
   type ColorParser,
@@ -276,7 +277,8 @@ function measureElement(
     const oy = rect.y + parsePx(origin[1]);
     world = multiply(world, multiply(translation(ox, oy), multiply(local, translation(-ox, -oy))));
   }
-  const opacity = parent.opacity * Number.parseFloat(cs.opacity);
+  const opacity =
+    parent.opacity * Number.parseFloat(cs.opacity) * analyzeFilter(cs.filter, ctx.color).opacity;
   let clip = parent.clip;
   const overflow = cs.overflow;
   const clips =
@@ -314,10 +316,10 @@ function intersect(a: Rect, b: Rect): Rect {
   return { x, y, w: Math.max(0, right - x), h: Math.max(0, bottom - y) };
 }
 
-function needsSubtreeRaster(m: Measured): boolean {
+function needsSubtreeRaster(ctx: Ctx, m: Measured): boolean {
   const { cs, el } = m;
   if (MEDIA_TAGS.has(el.tagName.toUpperCase()) && el.tagName.toUpperCase() !== 'IMG') return true;
-  if (cs.filter !== 'none') return true;
+  if (analyzeFilter(cs.filter, ctx.color).raster) return true;
   const backdrop =
     cs.backdropFilter || (cs as unknown as Record<string, string>).webkitBackdropFilter;
   if (backdrop && backdrop !== 'none') return true;
@@ -437,7 +439,7 @@ function paintBlock(ctx: Ctx, el: Element, inherited: Inherited): void {
     paintImage(ctx, m as Measured & { el: HTMLImageElement });
     return;
   }
-  if (needsSubtreeRaster(m)) {
+  if (needsSubtreeRaster(ctx, m)) {
     requestRaster(ctx, m, 'subtree');
     return;
   }
@@ -916,7 +918,7 @@ function makePicture(
 
 function paintImage(ctx: Ctx, m: Measured & { el: HTMLImageElement }): void {
   const { el, cs } = m;
-  if (needsSubtreeRaster(m) || el.naturalWidth === 0) {
+  if (needsSubtreeRaster(ctx, m) || el.naturalWidth === 0) {
     if (el.naturalWidth > 0 || el.currentSrc) requestRaster(ctx, m, 'subtree');
     return;
   }

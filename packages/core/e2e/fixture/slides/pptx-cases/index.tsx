@@ -53,6 +53,8 @@ const Effects: Page = () => (
         objectPosition: '10px 20px',
       }}
     />
+    <h2 style={{ ...at(800, 320), filter: 'blur(0px)' }}>Settled blur-in heading</h2>
+    <p style={{ ...at(800, 420), filter: 'opacity(0.5)' }}>Half opacity filter</p>
   </div>
 );
 

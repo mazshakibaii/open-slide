@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  analyzeFilter,
   applyTextTransform,
   decompose,
   dominantShadow,
@@ -276,5 +277,28 @@ describe('parsePosition', () => {
   it('rejects what it cannot resolve', () => {
     expect(parsePosition('10em 0px')).toBeNull();
     expect(parsePosition('calc(10vw) 0px')).toBeNull();
+  });
+});
+
+describe('analyzeFilter', () => {
+  it('treats settled entrance-animation filters as no filter at all', () => {
+    expect(analyzeFilter('none')).toEqual({ opacity: 1, raster: false });
+    expect(analyzeFilter('blur(0px)')).toEqual({ opacity: 1, raster: false });
+    expect(analyzeFilter('blur(0px) brightness(1) saturate(100%) hue-rotate(0deg)')).toEqual({
+      opacity: 1,
+      raster: false,
+    });
+    expect(analyzeFilter('drop-shadow(rgba(0, 0, 0, 0) 0px 0px 0px)')).toEqual({
+      opacity: 1,
+      raster: false,
+    });
+  });
+  it('folds opacity() into the element opacity', () => {
+    expect(analyzeFilter('opacity(0.5) blur(0px)')).toEqual({ opacity: 0.5, raster: false });
+  });
+  it('rasterises filters PowerPoint has no equivalent for', () => {
+    expect(analyzeFilter('blur(4px)').raster).toBe(true);
+    expect(analyzeFilter('grayscale(1)').raster).toBe(true);
+    expect(analyzeFilter('url("#noise")').raster).toBe(true);
   });
 });

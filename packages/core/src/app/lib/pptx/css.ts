@@ -561,6 +561,44 @@ export function parsePosition(value: string): Position | null {
   return pos as Position;
 }
 
+export type FilterInfo = { opacity: number; raster: boolean };
+
+function filterAmount(arg: string): number {
+  const t = arg.trim();
+  if (t === '') return 1;
+  return t.endsWith('%') ? Number.parseFloat(t) / 100 : Number.parseFloat(t);
+}
+
+const IDENTITY_AT: Record<string, number> = {
+  brightness: 1,
+  contrast: 1,
+  saturate: 1,
+  grayscale: 0,
+  invert: 0,
+  sepia: 0,
+};
+
+/**
+ * Entrance animations settle on values like `blur(0px)`, which draw nothing but
+ * are not `none`; only functions that change pixels should force a raster.
+ */
+export function analyzeFilter(filter: string, colorParser: ColorParser = parseColor): FilterInfo {
+  const info: FilterInfo = { opacity: 1, raster: false };
+  if (!filter || filter === 'none') return info;
+  const fns = Array.from(filter.matchAll(/([a-z-]+)\(((?:[^()]|\([^()]*\))*)\)/g));
+  const consumed = filter.replace(/([a-z-]+)\(((?:[^()]|\([^()]*\))*)\)/g, '').trim();
+  if (consumed !== '' || fns.length === 0) return { ...info, raster: true };
+  for (const [, name, arg] of fns) {
+    if (name === 'opacity') info.opacity *= Math.min(1, Math.max(0, filterAmount(arg)));
+    else if (name === 'blur') info.raster ||= Number.parseFloat(arg) > 0;
+    else if (name === 'hue-rotate') info.raster ||= (parseAngleDeg(arg.trim()) ?? 1) % 360 !== 0;
+    else if (name === 'drop-shadow') info.raster ||= parseShadows(arg, colorParser).length > 0;
+    else if (name in IDENTITY_AT) info.raster ||= filterAmount(arg) !== IDENTITY_AT[name];
+    else info.raster = true;
+  }
+  return info;
+}
+
 export function parseBlurPx(filter: string): number {
   if (!filter || filter === 'none') return 0;
   let total = 0;

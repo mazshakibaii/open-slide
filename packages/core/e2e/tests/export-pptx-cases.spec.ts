@@ -18,7 +18,9 @@ test.beforeAll(async ({ browser }) => {
   const download = page.waitForEvent('download');
   await page.getByRole('menuitem', { name: 'Export as PPTX', exact: true }).click();
   const file = await download;
-  parts = unzipSync(new Uint8Array(await fs.readFile(await file.path())));
+  const bytes = await fs.readFile(await file.path());
+  if (process.env.PPTX_CASES_OUT) await fs.writeFile(process.env.PPTX_CASES_OUT, bytes);
+  parts = unzipSync(new Uint8Array(bytes));
   await page.close();
 });
 
@@ -66,4 +68,10 @@ test('places an image by a length object-position', () => {
   expect(xml).not.toContain('NaN');
   const image = box(shapeNamed(xml, 'Image: Positioned'));
   expect(image).toEqual({ x: 530, y: 340, w: 190, h: 180 });
+});
+
+test('keeps text native under filters that draw nothing', () => {
+  const xml = slide(3);
+  expect(shapeNamed(xml, 'Text: Settled blur-in heading')).toContain('txBox="1"');
+  expect(shapeNamed(xml, 'Text: Half opacity filter')).toContain('<a:alpha val="50000"/>');
 });
