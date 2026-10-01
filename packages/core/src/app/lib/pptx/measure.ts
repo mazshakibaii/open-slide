@@ -35,6 +35,7 @@ import {
 } from './css';
 import { resolveFontFamily } from './fonts';
 import type { ImageStore, LoadedImage } from './images';
+import { materializePseudos, parseContent } from './pseudo';
 import {
   clampToSlide,
   expandRect,
@@ -123,6 +124,15 @@ export type MeasurePageOptions = {
 };
 
 export async function measurePage(options: MeasurePageOptions): Promise<SlideScene> {
+  const pseudos = materializePseudos(options.frame);
+  try {
+    return await measureMaterialized(options);
+  } finally {
+    pseudos.restore();
+  }
+}
+
+async function measureMaterialized(options: MeasurePageOptions): Promise<SlideScene> {
   const { frame } = options;
   const ctx: Ctx = {
     frame,
@@ -1383,10 +1393,16 @@ function bulletFor(
   const { el, cs } = m;
   if (cs.display !== 'list-item') return null;
   const type = cs.listStyleType;
-  if (type === 'none' || cs.listStylePosition !== 'outside') return null;
-  const markerColor = ctx.color(getComputedStyle(el, '::marker').color) ?? firstStyle.color;
+  const markerStyle = getComputedStyle(el, '::marker');
+  const custom = markerText(markerStyle.content) ?? markerText(type);
+  if ((type === 'none' && !custom) || cs.listStylePosition !== 'outside') return null;
+  const markerColor = ctx.color(markerStyle.color) ?? firstStyle.color;
   const color = withAlpha(markerColor, m.opacity);
   const size = firstStyle.sizePx;
+  if (custom) {
+    const width = measureText(ctx, cs, `${custom} `) || size;
+    return { bullet: { kind: 'char', char: custom, color, font: null }, width };
+  }
   const scheme = NUMBER_SCHEMES[type];
   if (scheme) {
     const list = el.parentElement;
@@ -1405,6 +1421,18 @@ function bulletFor(
   const char = BULLET_CHARS[type];
   if (!char) return null;
   return { bullet: { kind: 'char', char, color, font: 'Arial' }, width: size * 0.5 };
+}
+
+/** A string marker (`list-style-type: '✓ '` or `::marker { content }`), as PowerPoint's one bullet character. */
+function markerText(value: string): string | null {
+  if (!/^["']/.test(value.trim())) return null;
+  const parts = parseContent(value);
+  const text = parts
+    ?.map((p) => (p.kind === 'text' ? p.text : ''))
+    .join('')
+    .trim();
+  if (!text) return null;
+  return Array.from(new Intl.Segmenter().segment(text), (s) => s.segment)[0] ?? null;
 }
 
 function measureText(ctx: Ctx, cs: CSSStyleDeclaration, text: string): number {

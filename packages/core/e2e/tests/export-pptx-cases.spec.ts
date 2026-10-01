@@ -216,3 +216,22 @@ test('merges a plain list into one text box with a paragraph per item', () => {
   const numbers = shapeNamed(xml, 'Text: First numbered');
   expect(numbers.match(/<a:buAutoNum type="arabicPeriod" startAt="1"\/>/g)).toHaveLength(3);
 });
+
+test('exports generated content from ::before and ::after', () => {
+  const xml = slide(7);
+  expect(textOf(shapeNamed(xml, 'Text: → Arrow marker'))).toBe(
+    '→ Arrow marker via before\n→ Second arrow item'.replace('\n', ''),
+  );
+  const badge = shapeNamed(xml, 'Text: NEW');
+  expect(badge).toContain('<a:t>NEW</a:t>');
+  expect(xml).toMatch(/<a:srgbClr val="DC2626">/);
+  expect(textOf(shapeNamed(xml, 'Text: 1. Gather inputs'))).toBe('1. Gather inputs');
+  expect(textOf(shapeNamed(xml, 'Text: 2. Ship it'))).toBe('2. Ship it');
+  expect(xml).toContain('<a:solidFill><a:srgbClr val="22C55E">');
+});
+
+test('uses string list markers and ::marker content as bullet characters', () => {
+  const xml = slide(7);
+  expect(shapeNamed(xml, 'Text: String marker item')).toContain('<a:buChar char="✓"/>');
+  expect(shapeNamed(xml, 'Text: Marker content item')).toContain('<a:buChar char="★"/>');
+});

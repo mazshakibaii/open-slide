@@ -33,6 +33,13 @@ const Unpositioned: Page = () => (
 
 const css = `
 .pptx-cases .tw-shadow { box-shadow: 0 0 #0000, 0 0 #0000, 0 10px 15px -3px rgba(0, 0, 0, 0.35), 0 4px 6px -4px rgba(0, 0, 0, 0.35); }
+.pptx-cases .arrow li::before { content: '\\2192  '; color: #2563eb; }
+.pptx-cases .check { list-style-type: '✓ '; padding-left: 40px; }
+.pptx-cases .star li::marker { content: '★ '; }
+.pptx-cases .badge::after { content: 'NEW'; position: absolute; right: 8px; top: 8px; background: #dc2626; color: #fff; font-size: 14px; padding: 2px 6px; }
+.pptx-cases .steps { counter-reset: step; }
+.pptx-cases .steps p::before { counter-increment: step; content: counter(step) '. '; font-weight: 700; }
+.pptx-cases .accent::before { content: ''; position: absolute; left: 0; top: 0; width: 8px; height: 100%; background: #22c55e; }
 `;
 
 const Effects: Page = () => (
@@ -169,4 +176,37 @@ const Text: Page = () => (
   </div>
 );
 
-export default [First, Unpositioned, Effects, Stacking, Runs, Text] satisfies Page[];
+const Generated: Page = () => (
+  <div className="pptx-cases" style={{ ...page, position: 'relative' }}>
+    <style>{css}</style>
+    <ul className="arrow" style={{ ...at(80, 80), listStyle: 'none', padding: 0 }}>
+      <li>Arrow marker via before</li>
+      <li>Second arrow item</li>
+    </ul>
+    <ul className="check" style={at(700, 80)}>
+      <li>String marker item</li>
+    </ul>
+    <ul className="star" style={{ ...at(1280, 80), paddingLeft: 40 }}>
+      <li>Marker content item</li>
+    </ul>
+    <div
+      className="badge"
+      style={{ ...at(80, 400), width: 400, height: 160, background: '#f1f5f9', padding: 24 }}
+    >
+      Card with an after badge
+    </div>
+    <div className="steps" style={at(700, 400)}>
+      <p>Gather inputs</p>
+      <p>Ship it</p>
+    </div>
+    <div
+      id="accent"
+      className="accent"
+      style={{ ...at(1280, 400), width: 400, height: 120, padding: '24px 32px' }}
+    >
+      Accent bar card
+    </div>
+  </div>
+);
+
+export default [First, Unpositioned, Effects, Stacking, Runs, Text, Generated] satisfies Page[];
