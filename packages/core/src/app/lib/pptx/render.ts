@@ -64,6 +64,9 @@ export async function mountDeckOffscreen(
       if (!Page) continue;
       const host = document.createElement('div');
       host.setAttribute('data-osd-canvas', '');
+      // The live canvas is a containing block (it is scaled), so pages may
+      // position against it without a positioned root of their own.
+      host.style.position = 'relative';
       host.style.width = `${CANVAS_WIDTH}px`;
       host.style.height = `${CANVAS_HEIGHT}px`;
       host.style.overflow = 'hidden';
