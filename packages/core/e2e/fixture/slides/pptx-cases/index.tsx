@@ -70,4 +70,26 @@ const Effects: Page = () => (
   </div>
 );
 
-export default [First, Unpositioned, Effects] satisfies Page[];
+const blob = (id: string, background: string) => (
+  <div
+    id={id}
+    style={{ ...at(40, 10), width: 300, height: 100, background, zIndex: -1, borderRadius: 50 }}
+  />
+);
+
+const Stacking: Page = () => (
+  <div style={{ ...page, position: 'relative' }}>
+    <div style={{ ...at(80, 80), width: 700, height: 200, zIndex: 0, fontSize: 48 }}>
+      Text above a blob
+      {blob('blob-in-context', '#f59e0b')}
+    </div>
+    <div id="panel" style={{ ...at(80, 400), width: 700, height: 300, background: '#e2e8f0' }}>
+      <div style={{ position: 'relative', fontSize: 48 }}>
+        Panel covers its blob
+        {blob('blob-under-panel', '#22c55e')}
+      </div>
+    </div>
+  </div>
+);
+
+export default [First, Unpositioned, Effects, Stacking] satisfies Page[];

@@ -69,14 +69,23 @@ const SKIPPED_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'IFRAME
 
 type Decoration = { underline: boolean; strike: boolean };
 
+type Slot = { node: SceneNode | null };
+
+/**
+ * The negative z-index layer of a stacking context. CSS paints those children
+ * right above the context's own background and beneath all of its other
+ * content, however deep in the tree they sit, so their slots are spliced in at
+ * `index` once the context has finished painting.
+ */
+type Layer = { index: number; items: { z: number; slots: Slot[] }[] };
+
 type Inherited = {
   world: Mat;
   opacity: number;
   clip: Rect | null;
   decoration: Decoration;
+  layer: Layer;
 };
-
-type Slot = { node: SceneNode | null };
 
 type Measured = {
   el: Element;
@@ -134,14 +143,15 @@ export async function measurePage(options: MeasurePageOptions): Promise<SlideSce
     const hostBg = ctx.color(getComputedStyle(frame).backgroundColor);
     background = isVisibleColor(hostBg) ? { kind: 'solid', color: hostBg } : null;
     const slideClip: Rect = { x: 0, y: 0, w: CANVAS_WIDTH, h: CANVAS_HEIGHT };
-    for (const child of Array.from(frame.children)) {
-      paintBlock(ctx, child, {
-        world: IDENTITY,
-        opacity: 1,
-        clip: slideClip,
-        decoration: { underline: false, strike: false },
-      });
-    }
+    const layer: Layer = { index: 0, items: [] };
+    paintChildren(ctx, Array.from(frame.children), {
+      world: IDENTITY,
+      opacity: 1,
+      clip: slideClip,
+      decoration: { underline: false, strike: false },
+      layer,
+    });
+    flushLayer(ctx, layer);
   } finally {
     frame.classList.remove(MEASURE_CLASS);
     style.remove();
@@ -455,19 +465,20 @@ function paintBlock(ctx: Ctx, el: Element, inherited: Inherited): void {
     return;
   }
 
-  const decoration = mergeDecoration(inherited.decoration, cs);
-  const childInherited: Inherited = {
-    world: m.world,
-    opacity: m.opacity,
-    clip: m.clip,
-    decoration,
-  };
-
   if (paintsBackgroundSeparately(cs, m.rect.w, m.rect.h, ctx.color)) {
     requestRaster(ctx, m, 'self');
   } else {
     paintBox(ctx, m);
   }
+
+  const stacking = createsStackingContext(ctx, el, cs);
+  const childInherited: Inherited = {
+    world: m.world,
+    opacity: m.opacity,
+    clip: m.clip,
+    decoration: mergeDecoration(inherited.decoration, cs),
+    layer: stacking ? { index: ctx.slots.length, items: [] } : inherited.layer,
+  };
 
   const atoms: Atom[] = [];
   const blockChildren: Element[] = [];
@@ -477,6 +488,33 @@ function paintBlock(ctx: Ctx, el: Element, inherited: Inherited): void {
   for (const item of inlineItems) paintBox(ctx, item);
   paintText(ctx, m, atoms);
   paintChildren(ctx, blockChildren, childInherited);
+  if (stacking) flushLayer(ctx, childInherited.layer);
+}
+
+function flushLayer(ctx: Ctx, layer: Layer): void {
+  const slots = layer.items.sort((a, b) => a.z - b.z).flatMap((item) => item.slots);
+  ctx.slots.splice(layer.index, 0, ...slots);
+}
+
+function createsStackingContext(ctx: Ctx, el: Element, cs: CSSStyleDeclaration): boolean {
+  if (cs.position === 'fixed' || cs.position === 'sticky') return true;
+  if (cs.zIndex !== 'auto' && (cs.position !== 'static' || isFlexOrGridItem(el))) return true;
+  if (Number.parseFloat(cs.opacity) < 1) return true;
+  if (ctx.projected.has(el) || !isIdentity(ctx.transforms.get(el) ?? IDENTITY)) return true;
+  if (cs.filter !== 'none' || cs.mixBlendMode !== 'normal' || cs.isolation === 'isolate')
+    return true;
+  if (cs.perspective !== 'none' || cs.clipPath !== 'none') return true;
+  const extra = cs as unknown as Record<string, string>;
+  const backdrop = cs.backdropFilter || extra.webkitBackdropFilter;
+  if (backdrop && backdrop !== 'none') return true;
+  const mask = cs.maskImage || extra.webkitMaskImage;
+  if (mask && mask !== 'none') return true;
+  return /paint|layout|strict|content/.test(cs.contain);
+}
+
+function isFlexOrGridItem(el: Element): boolean {
+  const parent = el.parentElement;
+  return !!parent && /flex|grid/.test(getComputedStyle(parent).display);
 }
 
 function mergeDecoration(parent: Decoration, cs: CSSStyleDeclaration): Decoration {
@@ -500,16 +538,24 @@ function paintChildren(ctx: Ctx, children: Element[], inherited: Inherited): voi
       cs.mixBlendMode !== 'normal' ||
       cs.isolation === 'isolate';
     const z = cs.zIndex === 'auto' ? 0 : Number.parseInt(cs.zIndex, 10) || 0;
-    return { el: child, z: positioned ? z : 0, order, positioned };
+    const zApplies = cs.position !== 'static' || isFlexOrGridItem(child);
+    return {
+      el: child,
+      z: zApplies ? z : 0,
+      order,
+      positioned: positioned || (zApplies && z !== 0),
+    };
   });
-  const negative = entries
-    .filter((e) => e.positioned && e.z < 0)
-    .sort((a, b) => a.z - b.z || a.order - b.order);
+  for (const e of entries.filter((e) => e.positioned && e.z < 0)) {
+    const start = ctx.slots.length;
+    paintBlock(ctx, e.el, inherited);
+    inherited.layer.items.push({ z: e.z, slots: ctx.slots.splice(start) });
+  }
   const flow = entries.filter((e) => !e.positioned);
   const positive = entries
     .filter((e) => e.positioned && e.z >= 0)
     .sort((a, b) => a.z - b.z || a.order - b.order);
-  for (const e of [...negative, ...flow, ...positive]) paintBlock(ctx, e.el, inherited);
+  for (const e of [...flow, ...positive]) paintBlock(ctx, e.el, inherited);
 }
 
 /**

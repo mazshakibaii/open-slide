@@ -89,3 +89,19 @@ test('rasterises a 3D-transformed element instead of dropping it', () => {
   expect(picture).toBeDefined();
   expect(picture).toContain('name="Rendered image"');
 });
+
+function order(xml: string, name: string): number {
+  const index = shapes(xml).findIndex((s) => s.includes(`name="${name}`));
+  if (index < 0) throw new Error(`no shape named "${name}"`);
+  return index;
+}
+
+test('paints negative z-index children beneath their stacking context content', () => {
+  const xml = slide(4);
+  expect(order(xml, 'Rounded Rectangle #blob-in-context')).toBeLessThan(
+    order(xml, 'Text: Text above a blob'),
+  );
+  expect(order(xml, 'Rounded Rectangle #blob-under-panel')).toBeLessThan(
+    order(xml, 'Rectangle #panel'),
+  );
+});
