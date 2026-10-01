@@ -1,4 +1,5 @@
 import type { Page, SlideMeta } from '@open-slide/core';
+import photo from './assets/photo.png';
 
 export const meta: SlideMeta = {
   title: 'PPTX Cases',
@@ -40,6 +41,17 @@ const Effects: Page = () => (
       id="tw-shadow"
       className="tw-shadow"
       style={{ ...at(80, 80), width: 360, height: 160, background: '#fff', borderRadius: 12 }}
+    />
+    <img
+      src={photo}
+      alt="Positioned"
+      style={{
+        ...at(520, 320),
+        width: 200,
+        height: 200,
+        objectFit: 'cover',
+        objectPosition: '10px 20px',
+      }}
     />
   </div>
 );

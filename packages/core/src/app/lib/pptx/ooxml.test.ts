@@ -197,3 +197,35 @@ describe('buildPptxFiles', () => {
     }
   });
 });
+
+describe('geometry guard', () => {
+  it('leaves out a node whose geometry did not resolve rather than writing NaN', () => {
+    const files = buildPptxFiles({
+      images: [{ id: 1, bytes: PNG_1PX, format: 'png' }],
+      slides: [
+        {
+          background: null,
+          notes: null,
+          nodes: [
+            {
+              kind: 'picture',
+              name: 'Image: broken',
+              box: { x: Number.NaN, y: 0, w: 10, h: 10 },
+              rotationDeg: 0,
+              flipV: false,
+              imageId: 1,
+              crop: { l: Number.NaN, t: 0, r: 0, b: 0 },
+              alpha: 1,
+              geometry: { kind: 'rect' },
+              outline: null,
+              shadow: null,
+            },
+          ],
+        },
+      ],
+    });
+    const slide = strFromU8(files['ppt/slides/slide1.xml']);
+    expect(slide).not.toContain('NaN');
+    expect(slide).not.toContain('Image: broken');
+  });
+});

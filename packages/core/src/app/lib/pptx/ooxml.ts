@@ -260,8 +260,19 @@ export function slideXml(
   const bg = slide.background
     ? `<p:bg><p:bgPr>${fillXml(slide.background, ctx)}<a:effectLst/></p:bgPr></p:bg>`
     : '';
-  const shapes = slide.nodes.map((node) => nodeXml(node, ctx)).join('');
+  const shapes = slide.nodes
+    .filter(hasFiniteGeometry)
+    .map((node) => nodeXml(node, ctx))
+    .join('');
   return `${XML_DECL}<p:sld xmlns:a="${NS_A}" xmlns:r="${OD_REL}" xmlns:p="${NS_P}"><p:cSld>${bg}<p:spTree>${EMPTY_GROUP}${shapes}</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>`;
+}
+
+function hasFiniteGeometry(node: SceneNode): boolean {
+  const { x, y, w, h } = node.box;
+  if (![x, y, w, h, node.rotationDeg].every(Number.isFinite)) return false;
+  if (node.kind !== 'picture' || !node.crop) return true;
+  const { l, t, r, b } = node.crop;
+  return [l, t, r, b].every(Number.isFinite);
 }
 
 type EmitContext = {

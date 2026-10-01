@@ -12,10 +12,12 @@ import {
   type Mat,
   multiply,
   normalizeRadii,
+  type Position,
   parseAngleDeg,
   parseBlurPx,
   parseCornerRadius,
   parseLinearGradient,
+  parsePosition,
   parsePx,
   parseShadows,
   parseTransform,
@@ -821,26 +823,13 @@ function makeShape(
   };
 }
 
-function parseBackgroundPosition(value: string): { x: number; y: number } {
-  const parts = value.split(/\s+/);
-  const pct = (token: string | undefined, fallback: number) => {
-    if (!token) return fallback;
-    if (token.endsWith('%')) return Number.parseFloat(token) / 100;
-    if (token === 'left' || token === 'top') return 0;
-    if (token === 'center') return 0.5;
-    if (token === 'right' || token === 'bottom') return 1;
-    return Number.NaN;
-  };
-  return { x: pct(parts[0], 0.5), y: pct(parts[1], 0.5) };
-}
-
 type Placement = { rect: Rect; crop: Crop | null };
 
 function placeImage(
   fit: 'cover' | 'contain' | 'fill' | 'none' | 'scale-down',
   natural: { width: number; height: number },
   box: Rect,
-  pos: { x: number; y: number },
+  pos: Position,
 ): Placement {
   if (fit === 'fill' || natural.width === 0 || natural.height === 0)
     return { rect: box, crop: null };
@@ -861,8 +850,8 @@ function placeImage(
   }
   const w = natural.width * scale;
   const h = natural.height * scale;
-  const x = box.x + (box.w - w) * pos.x;
-  const y = box.y + (box.h - h) * pos.y;
+  const x = box.x + (box.w - w) * pos.x.frac + pos.x.px;
+  const y = box.y + (box.h - h) * pos.y.frac + pos.y.px;
   const drawn = { x, y, w, h };
   const visible = intersect(drawn, box);
   const crop: Crop = {
@@ -941,7 +930,11 @@ function paintImage(ctx: Ctx, m: Measured & { el: HTMLImageElement }): void {
   const bgOrBorder = paintsAnything(cs, ctx.color);
   if (bgOrBorder) paintBoxRect(ctx, m, m.rect);
   const fit = (cs.objectFit || 'fill') as Parameters<typeof placeImage>[0];
-  const pos = parseBackgroundPosition(cs.objectPosition || '50% 50%');
+  const pos = parsePosition(cs.objectPosition || '50% 50%');
+  if (!pos) {
+    requestRaster(ctx, m, 'subtree');
+    return;
+  }
   const natural = { width: el.naturalWidth, height: el.naturalHeight };
   const placement = cropToClip(placeImage(fit, natural, inner, pos), m.clip, m.world);
   if (!placement || placement.rect.w < MIN_SIZE || placement.rect.h < MIN_SIZE) return;
@@ -973,8 +966,8 @@ function paintBackgroundImage(
   const { cs } = m;
   const repeat = cs.backgroundRepeat.split(/\s+/)[0];
   const size = cs.backgroundSize.split(',')[0].trim();
-  const pos = parseBackgroundPosition(cs.backgroundPosition.split(',')[0].trim());
-  if (Number.isNaN(pos.x) || Number.isNaN(pos.y)) {
+  const pos = parsePosition(cs.backgroundPosition.split(',')[0].trim());
+  if (!pos) {
     requestRaster(ctx, m, 'self');
     return;
   }
@@ -1003,8 +996,8 @@ function paintBackgroundImage(
         } else if (w === null) w = ((h as number) / natural.height) * natural.width;
         else if (h === null) h = (w / natural.width) * natural.height;
         const drawn = {
-          x: rect.x + (rect.w - w) * pos.x,
-          y: rect.y + (rect.h - (h as number)) * pos.y,
+          x: rect.x + (rect.w - w) * pos.x.frac + pos.x.px,
+          y: rect.y + (rect.h - (h as number)) * pos.y.frac + pos.y.px,
           w,
           h: h as number,
         };

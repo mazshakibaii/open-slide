@@ -12,6 +12,7 @@ import {
   parseCornerRadius,
   parseFontFamilies,
   parseLinearGradient,
+  parsePosition,
   parseShadows,
   parseTransform,
   splitTopLevel,
@@ -252,5 +253,28 @@ describe('geometryFor', () => {
   });
   it('maps no radius to a plain rectangle', () => {
     expect(geometryFor(uniform(0), 300, 80)).toEqual({ kind: 'rect' });
+  });
+});
+
+describe('parsePosition', () => {
+  it('resolves percentages, keywords and lengths to a fraction of the free space plus an offset', () => {
+    expect(parsePosition('50% 50%')).toEqual({ x: { frac: 0.5, px: 0 }, y: { frac: 0.5, px: 0 } });
+    expect(parsePosition('10px 20px')).toEqual({ x: { frac: 0, px: 10 }, y: { frac: 0, px: 20 } });
+    expect(parsePosition('right top')).toEqual({ x: { frac: 1, px: 0 }, y: { frac: 0, px: 0 } });
+    expect(parsePosition('top')).toEqual({ x: { frac: 0.5, px: 0 }, y: { frac: 0, px: 0 } });
+  });
+  it('reads edge offsets and calc() sums', () => {
+    expect(parsePosition('right 10px bottom 20px')).toEqual({
+      x: { frac: 1, px: -10 },
+      y: { frac: 1, px: -20 },
+    });
+    expect(parsePosition('calc(50% + 12px) 0%')).toEqual({
+      x: { frac: 0.5, px: 12 },
+      y: { frac: 0, px: 0 },
+    });
+  });
+  it('rejects what it cannot resolve', () => {
+    expect(parsePosition('10em 0px')).toBeNull();
+    expect(parsePosition('calc(10vw) 0px')).toBeNull();
   });
 });

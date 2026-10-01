@@ -494,6 +494,73 @@ export function geometryFor(radii: Radii, w: number, h: number): Geometry {
   return { kind: 'custom', radii };
 }
 
+/** An offset along one axis: `frac` of the free space (box minus content) plus `px`. */
+export type PositionAxis = { frac: number; px: number };
+export type Position = { x: PositionAxis; y: PositionAxis };
+
+const EDGE: Record<string, { axis: 'x' | 'y' | null; frac: number }> = {
+  left: { axis: 'x', frac: 0 },
+  right: { axis: 'x', frac: 1 },
+  top: { axis: 'y', frac: 0 },
+  bottom: { axis: 'y', frac: 1 },
+  center: { axis: null, frac: 0.5 },
+};
+
+function lengthAxis(token: string): PositionAxis | null {
+  const t = token.trim();
+  if (/^-?[\d.]+%$/.test(t)) return { frac: Number.parseFloat(t) / 100, px: 0 };
+  if (/^-?[\d.]+(px)?$/.test(t)) return { frac: 0, px: Number.parseFloat(t) };
+  const calc = /^calc\((.*)\)$/.exec(t);
+  if (!calc) return null;
+  const out: PositionAxis = { frac: 0, px: 0 };
+  for (const m of calc[1].replace(/\s+/g, '').matchAll(/([+-]?)(\d*\.?\d+)(%|px)/g)) {
+    const n = Number.parseFloat(m[2]) * (m[1] === '-' ? -1 : 1);
+    if (m[3] === '%') out.frac += n / 100;
+    else out.px += n;
+  }
+  const consumed = calc[1].replace(/\s+/g, '').replace(/[+-]?\d*\.?\d+(%|px)/g, '');
+  return consumed === '' ? out : null;
+}
+
+/** Resolves a computed `object-position` / `background-position` value. */
+export function parsePosition(value: string): Position | null {
+  const tokens = splitTopLevel(value.trim(), ' ');
+  if (tokens.length === 0 || tokens.length > 4) return null;
+  const pos: Partial<Position> = {};
+  if (tokens.length <= 2) {
+    const ordered =
+      EDGE[tokens[0]]?.axis === 'y' || EDGE[tokens[1] ?? '']?.axis === 'x'
+        ? [tokens[1] ?? 'center', tokens[0]]
+        : [tokens[0], tokens[1] ?? 'center'];
+    for (const [i, token] of ordered.entries()) {
+      const axis = i === 0 ? 'x' : 'y';
+      const edge = EDGE[token];
+      const resolved = edge ? { frac: edge.frac, px: 0 } : lengthAxis(token);
+      if (!resolved) return null;
+      pos[axis] = resolved;
+    }
+    return pos as Position;
+  }
+  for (let i = 0; i < tokens.length; i++) {
+    const edge = EDGE[tokens[i]];
+    if (!edge) return null;
+    let offset: PositionAxis | null = null;
+    if (tokens[i + 1] !== undefined && !EDGE[tokens[i + 1]]) {
+      offset = lengthAxis(tokens[i + 1]);
+      if (!offset) return null;
+      i++;
+    }
+    const axis = edge.axis ?? (pos.x ? 'y' : 'x');
+    const sign = edge.frac === 1 ? -1 : 1;
+    pos[axis] = {
+      frac: edge.frac + sign * (offset?.frac ?? 0),
+      px: sign * (offset?.px ?? 0),
+    };
+  }
+  if (!pos.x || !pos.y) return null;
+  return pos as Position;
+}
+
 export function parseBlurPx(filter: string): number {
   if (!filter || filter === 'none') return 0;
   let total = 0;

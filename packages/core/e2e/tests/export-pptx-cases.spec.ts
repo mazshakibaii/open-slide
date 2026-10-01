@@ -60,3 +60,10 @@ test('keeps the visible layer of a Tailwind shadow list', () => {
   expect(Number(shadow?.[1])).toBeGreaterThan(0);
   expect(shadow?.[2]).not.toContain('<a:alpha val="0"/>');
 });
+
+test('places an image by a length object-position', () => {
+  const xml = slide(3);
+  expect(xml).not.toContain('NaN');
+  const image = box(shapeNamed(xml, 'Image: Positioned'));
+  expect(image).toEqual({ x: 530, y: 340, w: 190, h: 180 });
+});
