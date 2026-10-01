@@ -65,6 +65,7 @@ describe('textNodeFor', () => {
     kerning: true,
     link: null,
     highlight: null,
+    gradient: null,
   } as const;
 
   it('places a non-wrapping text box over the drawn text', () => {

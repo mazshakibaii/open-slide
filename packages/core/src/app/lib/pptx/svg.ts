@@ -295,6 +295,7 @@ function svgRunStyle(
     kerning: cs.fontKerning !== 'none',
     link: null,
     highlight: null,
+    gradient: null,
   };
 }
 

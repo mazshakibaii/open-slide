@@ -3,13 +3,14 @@ import { expect, test } from '@playwright/test';
 test.describe('home slide browser', () => {
   test('lists every fixture deck with its display title', async ({ page }) => {
     await page.goto('/');
-    await expect(page.locator('li h3')).toHaveCount(6);
+    await expect(page.locator('li h3')).toHaveCount(7);
     await expect(page.getByText('Alpha Deck')).toBeVisible();
     await expect(page.getByText('Steps Deck')).toBeVisible();
     await expect(page.getByText('Edit Target')).toBeVisible();
     await expect(page.getByText('Hot Deck')).toBeVisible();
     await expect(page.getByText('PPTX Cases')).toBeVisible();
     await expect(page.getByText('PPTX Tables')).toBeVisible();
+    await expect(page.getByText('PPTX SVG', { exact: true })).toBeVisible();
   });
 
   test('slide card links to the viewer', async ({ page }) => {
@@ -31,7 +32,7 @@ test.describe('home slide browser', () => {
     await search.fill('zzz-no-match');
     await expect(page.getByText('No matches')).toBeVisible();
     await page.getByRole('button', { name: 'Clear search' }).first().click();
-    await expect(page.locator('li h3')).toHaveCount(6);
+    await expect(page.locator('li h3')).toHaveCount(7);
   });
 
   test('sort control reorders decks by created date', async ({ page }) => {
